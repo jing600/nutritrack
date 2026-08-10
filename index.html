@@ -175,13 +175,15 @@
       <div class="actions">
         <button class="secondary" id="autoEnhanceBtn">整图强化识别</button>
         <button class="secondary" id="cropOcrBtn">裁剪营养表</button>
+        <button class="secondary" id="splitOcrBtn">双栏营养表识别</button>
       </div>
 
       <div id="cropArea" class="hide">
         <div class="sub" style="margin:8px 0">在图片上拖动框选营养成分表：</div>
         <canvas id="cropCanvas" style="width:100%;max-height:55vh;border:1px solid #ddd;border-radius:12px;touch-action:none"></canvas>
         <div class="actions" style="margin-top:8px">
-          <button id="recognizeCropBtn">识别选中区域</button>
+          <button id="recognizeCropBtn">普通识别选中区域</button>
+          <button id="recognizeSplitCropBtn">按左右双栏识别</button>
           <button class="secondary" id="cancelCropBtn">取消裁剪</button>
         </div>
       </div>
@@ -1017,6 +1019,202 @@ function preprocessImage(source, selection=null){
   return c;
 }
 
+
+async function runTesseract(canvas,lang,label,whitelist=""){
+  const options={
+    preserve_interword_spaces:"1",
+    logger:m=>{
+      if(m.progress){
+        $("#ocrStatus").textContent=
+          `${label} · ${Math.round(m.progress*100)}%`;
+      }
+    }
+  };
+
+  if(whitelist){
+    options.tessedit_char_whitelist=whitelist;
+  }
+
+  return await Tesseract.recognize(canvas,lang,options);
+}
+
+function cropCanvasRegion(source,x,y,w,h){
+  const c=document.createElement("canvas");
+  c.width=Math.max(1,Math.round(w));
+  c.height=Math.max(1,Math.round(h));
+  const ctx=c.getContext("2d");
+  ctx.drawImage(source,x,y,w,h,0,0,c.width,c.height);
+  return c;
+}
+
+function makeHighContrast(source){
+  const c=document.createElement("canvas");
+  c.width=source.width;
+  c.height=source.height;
+
+  const ctx=c.getContext("2d",{willReadFrequently:true});
+  ctx.drawImage(source,0,0);
+
+  const img=ctx.getImageData(0,0,c.width,c.height);
+  const d=img.data;
+
+  for(let i=0;i<d.length;i+=4){
+    const g=Math.round(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114);
+    const v=g>150?255:0;
+    d[i]=d[i+1]=d[i+2]=v;
+    d[i+3]=255;
+  }
+
+  ctx.putImageData(img,0,0);
+  return c;
+}
+
+function extractNutritionByRows(text){
+  const s=cleanOcrText(text);
+  const out={};
+
+  const defs=[
+    ["kj",/(?:能量|energy)[^0-9]{0,18}(\d{2,5}(?:\.\d+)?)\s*k\s*j/i],
+    ["protein",/(?:蛋白质|protein)[^0-9]{0,18}(\d{1,3}(?:\.\d+)?)\s*g/i],
+    ["fat",/(?:脂肪|fat)[^0-9]{0,18}(\d{1,3}(?:\.\d+)?)\s*g/i],
+    ["carbs",/(?:碳水化合物|碳水|carbohydrates?)[^0-9]{0,22}(\d{1,3}(?:\.\d+)?)\s*g/i],
+    ["fiber",/(?:膳食纤维|纤维|dietary\s*fib(?:er|re)|fib(?:er|re))[^0-9]{0,22}(\d{1,3}(?:\.\d+)?)\s*g/i],
+    ["sodium",/(?:钠|sodium)[^0-9]{0,18}(\d{1,5}(?:\.\d+)?)\s*m\s*g/i]
+  ];
+
+  for(const [key,re] of defs){
+    const m=s.match(re);
+    if(m)out[key]=Number(m[1]);
+  }
+
+  return out;
+}
+
+function mergeRecognizedValues(...objs){
+  const out={};
+  for(const obj of objs){
+    for(const [k,v] of Object.entries(obj||{})){
+      if((out[k]===undefined || !out[k]) && Number(v)>0){
+        out[k]=Number(v);
+      }
+    }
+  }
+  return out;
+}
+
+async function recognizeTwoColumnTable(canvas,label="双栏营养表识别"){
+  $("#ocrStatus").textContent=`${label}：正在拆分左右两栏…`;
+
+  // Chinese two-column nutrition tables usually have a narrow gap around
+  // the middle. Slight overlap avoids cutting characters at the boundary.
+  const overlap=Math.round(canvas.width*0.04);
+  const half=Math.round(canvas.width/2);
+
+  const left=cropCanvasRegion(
+    canvas,0,0,
+    Math.min(canvas.width,half+overlap),
+    canvas.height
+  );
+
+  const right=cropCanvasRegion(
+    canvas,
+    Math.max(0,half-overlap),0,
+    canvas.width-Math.max(0,half-overlap),
+    canvas.height
+  );
+
+  const leftHC=makeHighContrast(left);
+  const rightHC=makeHighContrast(right);
+
+  // Each side gets one Chinese OCR pass. Because the table is now one
+  // column wide, Tesseract is much less likely to merge unrelated rows.
+  const leftRes=await runTesseract(leftHC,"eng+chi_sim",`${label} · 左栏`);
+  const rightRes=await runTesseract(rightHC,"eng+chi_sim",`${label} · 右栏`);
+
+  const leftText=(leftRes.data.text||"").trim();
+  const rightText=(rightRes.data.text||"").trim();
+
+  // Also run a numeric pass on each side to keep decimal values/units.
+  const whitelist="0123456789.,%kKjJgGmMcalCALNRVrv/ ";
+  const leftNum=await runTesseract(left,"eng",`${label} · 左栏数字`,whitelist);
+  const rightNum=await runTesseract(right,"eng",`${label} · 右栏数字`,whitelist);
+
+  const leftNumText=(leftNum.data.text||"").trim();
+  const rightNumText=(rightNum.data.text||"").trim();
+
+  $("#ocrText").value=
+`【左栏】
+${leftText}
+
+【左栏数字】
+${leftNumText}
+
+【右栏】
+${rightText}
+
+【右栏数字】
+${rightNumText}`;
+
+  // Keyword-row parsing works much better after splitting the columns.
+  let values=mergeRecognizedValues(
+    extractNutritionByRows(leftText),
+    extractNutritionByRows(rightText)
+  );
+
+  // Reuse the numeric recovery on each column independently.
+  const leftRecovered=recoverNutritionNumbers(leftNumText,leftText);
+  const rightRecovered=recoverNutritionNumbers(rightNumText,rightText);
+  values=mergeRecognizedValues(values,leftRecovered,rightRecovered);
+
+  // Detect "每30g", "每25g", etc. from either side.
+  const combined=cleanOcrText(`${leftText}\n${rightText}\n${leftNumText}\n${rightNumText}`);
+  const bm=combined.match(/(?:每|per\s*)(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)/i);
+  let baseAmount=bm?Number(bm[1]):100;
+  let baseUnit=bm && /ml|毫升/i.test(bm[2])?"ml":"g";
+
+  // If OCR missed the Chinese "每", repeated 30g headers are common.
+  if(!bm){
+    const nums=[...combined.matchAll(/(\d+(?:\.\d+)?)\s*g/ig)]
+      .map(m=>Number(m[1]))
+      .filter(v=>v>=5 && v<=80);
+
+    const counts={};
+    nums.forEach(v=>counts[v]=(counts[v]||0)+1);
+    const best=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+    if(best && Number(best[1])>=2)baseAmount=Number(best[0]);
+  }
+
+  // Normalize to per 100g/ml only once.
+  if(baseAmount && baseAmount>0 && baseAmount!==100){
+    const scale=100/baseAmount;
+
+    for(const k of ["kj","protein","fat","carbs","fiber","sodium"]){
+      if(values[k])values[k]=round(values[k]*scale);
+    }
+
+    $("#basis").value="100";
+    $("#amount").value=String(baseAmount);
+    $("#amountLabel").textContent=
+      `本次吃了多少 ${baseUnit}（标签原始基准：每 ${baseAmount}${baseUnit}）`;
+  }
+
+  for(const k of ["kj","protein","fat","carbs","fiber","sodium"]){
+    if(values[k])$("#"+k).value=values[k];
+  }
+
+  updateEnergyPreview();
+
+  const found=["kj","protein","fat","carbs","fiber","sodium"]
+    .filter(k=>Number($("#"+k).value)>0).length;
+
+  $("#ocrStatus").textContent=
+    found>=5
+      ? `双栏识别完成，已找到 ${found} 项主要营养数据。请核对数值。`
+      : `双栏识别完成，目前找到 ${found} 项。缺失项请直接在下面输入框补一下即可，不必重新识别。`;
+
+  return values;
+}
+
 async function recognizeCanvas(canvas,label){
   $("#ocrStatus").textContent=`${label}：第一遍识别数字和单位…`;
 
@@ -1203,6 +1401,24 @@ $("#cropOcrBtn").onclick=()=>{
   $("#cropArea").scrollIntoView({behavior:"smooth",block:"nearest"});
 };
 
+$("#splitOcrBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return alert("请先选择图片。");
+
+  try{
+    // If user already has a crop selection, use it; otherwise process
+    // the currently loaded image. Cropping first is still recommended.
+    const source=cropSelection
+      ? preprocessImage(ocrImageBitmap,cropSelection)
+      : preprocessImage(ocrImageBitmap);
+
+    await recognizeTwoColumnTable(source);
+  }catch(err){
+    console.error(err);
+    $("#ocrStatus").textContent=
+      "双栏识别失败。建议先点“裁剪营养表”，只框选白色营养表，再点“双栏营养表识别”。";
+  }
+};
+
 $("#cancelCropBtn").onclick=()=>{
   $("#cropArea").classList.add("hide");
   cropSelection=null;
@@ -1222,6 +1438,24 @@ $("#recognizeCropBtn").onclick=async()=>{
   }catch(err){
     console.error(err);
     $("#ocrStatus").textContent="裁剪区域识别失败，请重新框选稍大一点的区域。";
+  }
+};
+
+$("#recognizeSplitCropBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return;
+
+  if(!cropSelection || cropSelection.w<30 || cropSelection.h<30){
+    return alert("请先在图片上拖动框选营养成分表。");
+  }
+
+  try{
+    const enhanced=preprocessImage(ocrImageBitmap,cropSelection);
+    $("#cropArea").classList.add("hide");
+    await recognizeTwoColumnTable(enhanced,"裁剪双栏识别");
+  }catch(err){
+    console.error(err);
+    $("#ocrStatus").textContent=
+      "裁剪双栏识别失败。可以直接在下面营养数值输入框补充缺失项。";
   }
 };
 
