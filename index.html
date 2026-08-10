@@ -1069,27 +1069,132 @@ function makeHighContrast(source){
   return c;
 }
 
-function extractNutritionByRows(text){
+
+const CHINA_NRV={
+  kj:8400,
+  protein:60,
+  fat:60,
+  carbs:300,
+  fiber:25,
+  sodium:2000
+};
+
+function getPercentNearKeyword(text,keywords){
+  const lines=cleanOcrText(text).split(/\n+/).map(x=>x.trim()).filter(Boolean);
+
+  for(const line of lines){
+    if(!keywords.some(k=>k.test(line)))continue;
+    const p=line.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+    if(p)return Number(p[1]);
+  }
+
+  return 0;
+}
+
+function repairByNrv(key,value,percent){
+  value=Number(value)||0;
+  percent=Number(percent)||0;
+
+  if(!value)return 0;
+
+  // Reject values that are plainly impossible for a per-serving/per100g row.
+  const hardMax={
+    kj:10000,
+    protein:100,
+    fat:100,
+    carbs:100,
+    fiber:50,
+    sodium:5000
+  }[key] || 10000;
+
+  // If NRV exists, use it to detect a lost decimal point.
+  if(percent>0 && CHINA_NRV[key]){
+    const expected=CHINA_NRV[key]*percent/100;
+
+    // Test original, /10 and /100; OCR frequently drops decimal points.
+    const candidates=[value,value/10,value/100]
+      .filter(v=>v>0 && v<=hardMax);
+
+    let best=candidates[0]||0;
+    let bestErr=Infinity;
+
+    for(const c of candidates){
+      const err=Math.abs(c-expected)/Math.max(expected,0.01);
+      if(err<bestErr){
+        bestErr=err;
+        best=c;
+      }
+    }
+
+    // Only trust NRV correction when it is reasonably close.
+    if(bestErr<=0.45)return round(best);
+  }
+
+  return value<=hardMax ? value : 0;
+}
+
+function parseRowWithNrv(text,key,keywords,unitPattern){
   const s=cleanOcrText(text);
-  const out={};
+  const lines=s.split(/\n+/).map(x=>x.trim()).filter(Boolean);
 
-  const defs=[
-    ["kj",/(?:能量|energy)[^0-9]{0,18}(\d{2,5}(?:\.\d+)?)\s*k\s*j/i],
-    ["protein",/(?:蛋白质|protein)[^0-9]{0,18}(\d{1,3}(?:\.\d+)?)\s*g/i],
-    ["fat",/(?:脂肪|fat)[^0-9]{0,18}(\d{1,3}(?:\.\d+)?)\s*g/i],
-    ["carbs",/(?:碳水化合物|碳水|carbohydrates?)[^0-9]{0,22}(\d{1,3}(?:\.\d+)?)\s*g/i],
-    ["fiber",/(?:膳食纤维|纤维|dietary\s*fib(?:er|re)|fib(?:er|re))[^0-9]{0,22}(\d{1,3}(?:\.\d+)?)\s*g/i],
-    ["sodium",/(?:钠|sodium)[^0-9]{0,18}(\d{1,5}(?:\.\d+)?)\s*m\s*g/i]
-  ];
+  for(const line of lines){
+    if(!keywords.some(k=>k.test(line)))continue;
 
-  for(const [key,re] of defs){
-    const m=s.match(re);
-    if(m)out[key]=Number(m[1]);
+    const valueRe=new RegExp(`(\\d{1,5}(?:[\\.,]\\d+)?)\\s*${unitPattern}`,"i");
+    let m=line.match(valueRe);
+
+    // Fallback: OCR may lose the unit but retain a number before NRV%.
+    if(!m){
+      m=line.match(/(\d{1,5}(?:[\.,]\d+)?)\s*(?=\d{1,3}\s*%|$)/);
+    }
+
+    if(!m)continue;
+
+    const raw=Number(String(m[1]).replace(",","."));
+    const pm=line.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+    const percent=pm?Number(pm[1]):0;
+
+    return repairByNrv(key,raw,percent);
+  }
+
+  return 0;
+}
+
+function applyPlausibilityGuards(values){
+  const out={...values};
+
+  // Keep bad OCR from silently populating absurd nutrition values.
+  const max={
+    kj:10000,
+    protein:100,
+    fat:100,
+    carbs:100,
+    fiber:50,
+    sugar:100,
+    sodium:5000
+  };
+
+  for(const [k,limit] of Object.entries(max)){
+    if(out[k]!==undefined && Number(out[k])>limit){
+      out[k]=0;
+    }
   }
 
   return out;
 }
 
+function extractNutritionByRows(text){
+  const out={
+    kj:parseRowWithNrv(text,"kj",[/能量/i,/energy/i],"k\\s*j"),
+    protein:parseRowWithNrv(text,"protein",[/蛋白质/i,/protein/i],"g"),
+    fat:parseRowWithNrv(text,"fat",[/脂肪/i,/fat/i],"g"),
+    carbs:parseRowWithNrv(text,"carbs",[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"g"),
+    fiber:parseRowWithNrv(text,"fiber",[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"g"),
+    sodium:parseRowWithNrv(text,"sodium",[/钠/i,/sodium/i],"m\\s*g")
+  };
+
+  return applyPlausibilityGuards(out);
+}
 function mergeRecognizedValues(...objs){
   const out={};
   for(const obj of objs){
@@ -1100,6 +1205,72 @@ function mergeRecognizedValues(...objs){
     }
   }
   return out;
+}
+
+
+function makeThresholdVariant(source,threshold=150,invert=false){
+  const c=document.createElement("canvas");
+  c.width=source.width;
+  c.height=source.height;
+
+  const ctx=c.getContext("2d",{willReadFrequently:true});
+  ctx.drawImage(source,0,0);
+
+  const img=ctx.getImageData(0,0,c.width,c.height);
+  const d=img.data;
+
+  for(let i=0;i<d.length;i+=4){
+    const g=Math.round(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114);
+    let v=g>threshold?255:0;
+    if(invert)v=255-v;
+    d[i]=d[i+1]=d[i+2]=v;
+    d[i+3]=255;
+  }
+
+  ctx.putImageData(img,0,0);
+  return c;
+}
+
+function scoreNutritionValues(v){
+  let score=0;
+  if(v.kj>=50 && v.kj<=5000)score+=2;
+  if(v.protein>0 && v.protein<=60)score+=1;
+  if(v.fat>0 && v.fat<=60)score+=1;
+  if(v.carbs>0 && v.carbs<=100)score+=1;
+  if(v.fiber>0 && v.fiber<=30)score+=1;
+  if(v.sodium>0 && v.sodium<=3000)score+=1;
+  return score;
+}
+
+async function recognizeColumnMultiPass(canvas,label){
+  const variants=[
+    ["原图",canvas],
+    ["阈值135",makeThresholdVariant(canvas,135,false)],
+    ["阈值165",makeThresholdVariant(canvas,165,false)],
+    ["反相",makeThresholdVariant(canvas,150,true)]
+  ];
+
+  let bestText="";
+  let bestValues={};
+  let bestScore=-1;
+
+  for(const [name,img] of variants){
+    const res=await runTesseract(img,"eng+chi_sim",`${label} · ${name}`);
+    const text=(res.data.text||"").trim();
+    const values=extractNutritionByRows(text);
+    const score=scoreNutritionValues(values);
+
+    if(score>bestScore){
+      bestScore=score;
+      bestText=text;
+      bestValues=values;
+    }
+
+    // Stop early once this column has enough reliable rows.
+    if(score>=4)break;
+  }
+
+  return {text:bestText,values:bestValues};
 }
 
 async function recognizeTwoColumnTable(canvas,label="双栏营养表识别"){
@@ -1123,18 +1294,15 @@ async function recognizeTwoColumnTable(canvas,label="双栏营养表识别"){
     canvas.height
   );
 
-  const leftHC=makeHighContrast(left);
-  const rightHC=makeHighContrast(right);
+  // Multi-pass OCR tries several threshold variants and keeps the
+  // most plausible nutrition result for each column.
+  const leftBest=await recognizeColumnMultiPass(left,`${label} · 左栏`);
+  const rightBest=await recognizeColumnMultiPass(right,`${label} · 右栏`);
 
-  // Each side gets one Chinese OCR pass. Because the table is now one
-  // column wide, Tesseract is much less likely to merge unrelated rows.
-  const leftRes=await runTesseract(leftHC,"eng+chi_sim",`${label} · 左栏`);
-  const rightRes=await runTesseract(rightHC,"eng+chi_sim",`${label} · 右栏`);
+  const leftText=leftBest.text;
+  const rightText=rightBest.text;
 
-  const leftText=(leftRes.data.text||"").trim();
-  const rightText=(rightRes.data.text||"").trim();
-
-  // Also run a numeric pass on each side to keep decimal values/units.
+  // Separate numeric pass helps preserve decimals and units.
   const whitelist="0123456789.,%kKjJgGmMcalCALNRVrv/ ";
   const leftNum=await runTesseract(left,"eng",`${label} · 左栏数字`,whitelist);
   const rightNum=await runTesseract(right,"eng",`${label} · 右栏数字`,whitelist);
@@ -1157,6 +1325,8 @@ ${rightNumText}`;
 
   // Keyword-row parsing works much better after splitting the columns.
   let values=mergeRecognizedValues(
+    leftBest.values,
+    rightBest.values,
     extractNutritionByRows(leftText),
     extractNutritionByRows(rightText)
   );
@@ -1209,7 +1379,7 @@ ${rightNumText}`;
 
   $("#ocrStatus").textContent=
     found>=5
-      ? `双栏识别完成，已找到 ${found} 项主要营养数据。请核对数值。`
+      ? `双栏识别完成，已找到 ${found} 项主要营养数据，并进行了 NRV 小数点纠错。请核对数值。`
       : `双栏识别完成，目前找到 ${found} 项。缺失项请直接在下面输入框补一下即可，不必重新识别。`;
 
   return values;
