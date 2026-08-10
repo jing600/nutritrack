@@ -10,32 +10,102 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <title>NutriTrack</title>
+
   <style>
-    :root{--bg:#f7f7f8;--card:#fff;--text:#18181b;--muted:#71717a;--line:#e4e4e7;--accent:#111827;--good:#166534;--warn:#9a3412}
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-    .app{max-width:720px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 18px) 16px calc(env(safe-area-inset-bottom) + 96px)}
-    h1,h2,h3,p{margin-top:0}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.date{font-size:13px;color:var(--muted)}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:0 4px 18px rgba(0,0,0,.03)}
-    .kcal{font-size:42px;font-weight:800;letter-spacing:-1.5px}.sub{font-size:14px;color:var(--muted)}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{padding:14px;border:1px solid var(--line);border-radius:16px}.metric b{display:block;font-size:19px;margin-top:4px}
-    .row{display:flex;justify-content:space-between;gap:10px;align-items:center}.food{padding:12px 0;border-bottom:1px solid var(--line)}.food:last-child{border-bottom:0}
-    button,.btn{appearance:none;border:0;border-radius:14px;padding:13px 16px;font-size:16px;font-weight:700;background:var(--accent);color:white;cursor:pointer}
-    .secondary{background:#eceef1;color:#111827}.danger{background:#fee2e2;color:#991b1b}.small{padding:9px 12px;font-size:14px}
-    .fab{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 18px);width:min(680px,calc(100% - 32px));z-index:5;box-shadow:0 12px 30px rgba(0,0,0,.18)}
-    dialog{width:min(680px,calc(100% - 24px));border:0;border-radius:24px;padding:0;max-height:88vh;overflow:auto}dialog::backdrop{background:rgba(0,0,0,.35)}
-    .sheet{padding:20px}.actions{display:grid;gap:10px}.field{margin:12px 0}.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}.field input,.field select,.field textarea{width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:12px;font-size:16px;background:white}.field textarea{min-height:100px}
-    .status{font-size:13px;color:var(--muted);padding:8px 0}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:12px}.hide{display:none!important}
-    progress{width:100%;height:8px;border:0;border-radius:8px;overflow:hidden}progress::-webkit-progress-bar{background:#eceef1}progress::-webkit-progress-value{background:#111827}
-    img.preview{width:100%;max-height:260px;object-fit:contain;border-radius:14px;background:#f3f4f6;border:1px solid var(--line)}
+    :root{
+      --bg:#f7f7f8;--card:#fff;--text:#18181b;--muted:#71717a;
+      --line:#e4e4e7;--accent:#111827
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif
+    }
+    .app{
+      max-width:720px;margin:0 auto;
+      padding:calc(env(safe-area-inset-top) + 18px) 16px calc(env(safe-area-inset-bottom) + 96px)
+    }
+    h1,h2,h3,p{margin-top:0}
+    .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+    .date{font-size:13px;color:var(--muted)}
+    .card{
+      background:var(--card);border:1px solid var(--line);border-radius:22px;
+      padding:18px;margin:14px 0;box-shadow:0 4px 18px rgba(0,0,0,.03)
+    }
+    .kcal{font-size:42px;font-weight:800;letter-spacing:-1.5px}
+    .sub{font-size:14px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .metric{padding:14px;border:1px solid var(--line);border-radius:16px}
+    .metric b{display:block;font-size:19px;margin-top:4px}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .food{padding:12px 0;border-bottom:1px solid var(--line)}
+    .food:last-child{border-bottom:0}
+    button,.btn{
+      appearance:none;border:0;border-radius:14px;padding:13px 16px;
+      font-size:16px;font-weight:700;background:var(--accent);color:#fff;cursor:pointer
+    }
+    .secondary{background:#eceef1;color:#111827}
+    .small{padding:9px 12px;font-size:14px}
+    .fab{
+      position:fixed;left:50%;transform:translateX(-50%);
+      bottom:calc(env(safe-area-inset-bottom) + 18px);
+      width:min(680px,calc(100% - 32px));z-index:5;
+      box-shadow:0 12px 30px rgba(0,0,0,.18)
+    }
+    dialog{
+      width:min(680px,calc(100% - 24px));border:0;border-radius:24px;
+      padding:0;max-height:88vh;overflow:auto
+    }
+    dialog::backdrop{background:rgba(0,0,0,.35)}
+    .sheet{padding:20px}
+    .actions{display:grid;gap:10px}
+    .field{margin:12px 0}
+    .field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    .field input,.field select,.field textarea{
+      width:100%;padding:12px 13px;border:1px solid var(--line);
+      border-radius:12px;font-size:16px;background:#fff
+    }
+    .field textarea{min-height:100px}
+    .status{font-size:13px;color:var(--muted);padding:8px 0}
+    .hide{display:none!important}
+    progress{width:100%;height:8px;border:0;border-radius:8px;overflow:hidden}
+    progress::-webkit-progress-bar{background:#eceef1}
+    progress::-webkit-progress-value{background:#111827}
+    img.preview{
+      width:100%;max-height:260px;object-fit:contain;border-radius:14px;
+      background:#f3f4f6;border:1px solid var(--line)
+    }
+    .energy-preview,.calc-box,.meal-preview{
+      margin-top:8px;padding:12px;border-radius:14px;background:#f4f4f5
+    }
+    .calc-box strong{font-size:26px}
+    .section-title{font-size:17px;margin:22px 0 8px}
+    .note{
+      margin-top:10px;padding:10px 12px;border-radius:12px;
+      background:#fff7ed;color:#7c2d12;font-size:13px;line-height:1.45
+    }
   </style>
 </head>
+
 <body>
 <div class="app">
-  <div class="top"><div><div class="date" id="todayLabel"></div><h1 style="margin-bottom:4px">NutriTrack</h1><div class="sub">个人每日营养记录</div></div><button class="secondary small" id="settingsBtn">目标</button></div>
+  <div class="top">
+    <div>
+      <div class="date" id="todayLabel"></div>
+      <h1 style="margin-bottom:4px">NutriTrack</h1>
+      <div class="sub">个人每日营养记录</div>
+    </div>
+    <button class="secondary small" id="settingsBtn">目标</button>
+  </div>
 
   <section class="card">
-    <div class="sub">今日摄入</div><div class="kcal"><span id="kcalNow">0</span> <span style="font-size:18px">kcal</span></div>
-    <div class="sub">目标 <span id="kcalGoal">2000</span> kcal · 剩余 <span id="kcalLeft">2000</span> kcal</div>
+    <div class="sub">今日摄入</div>
+    <div class="kcal"><span id="kcalNow">0</span> <span style="font-size:18px">kcal</span></div>
+    <div class="sub">≈ <span id="kjNow">0</span> kJ</div>
+    <div class="sub" style="margin-top:6px">
+      目标 <span id="kcalGoal">2000</span> kcal ·
+      剩余 <span id="kcalLeft">2000</span> kcal
+    </div>
     <progress id="kcalProgress" max="2000" value="0"></progress>
   </section>
 
@@ -46,99 +116,537 @@
     <div class="metric"><span class="sub">膳食纤维</span><b><span id="fiberNow">0</span> / <span id="fiberGoal">30</span> g</b></div>
   </section>
 
-  <section class="card"><div class="row"><h2 style="font-size:20px;margin:0">今日记录</h2><button class="secondary small" id="clearTodayBtn">清空今日</button></div><div id="foodList" style="margin-top:8px"></div></section>
+  <section class="card">
+    <div class="row">
+      <h2 style="font-size:20px;margin:0">今日记录</h2>
+      <button class="secondary small" id="clearTodayBtn">清空今日</button>
+    </div>
+    <div id="foodList" style="margin-top:8px"></div>
+  </section>
 </div>
+
 <button class="fab" id="addBtn">＋ 添加食品</button>
 
-<dialog id="addDialog"><div class="sheet"><div class="row"><h2>添加食品</h2><button class="secondary small close">关闭</button></div>
-  <div class="actions">
-    <button id="scanLabelBtn">从相册识别营养成分表</button>
-    <button class="secondary" id="manualBtn">手动添加</button>
-  </div>
-  <input id="imageInput" type="file" accept="image/*" class="hide" />
-  <div id="ocrArea" class="hide">
-    <div class="field"><label>图片</label><img class="preview" id="preview" alt="营养标签预览"></div>
-    <div class="status" id="ocrStatus">准备识别…</div>
-    <div class="field"><label>OCR 原始文本（可直接修改）</label><textarea id="ocrText"></textarea></div>
-    <button class="secondary" id="parseBtn">重新解析文本</button>
-  </div>
-  <div id="foodForm" class="hide">
-    <div class="field"><label>食品名称</label><input id="foodName" placeholder="例如：燕麦片"></div>
-    <div class="field"><label>营养基准</label><select id="basis"><option value="100">每 100g / 100ml</option><option value="serving">每份</option></select></div>
-    <div class="grid">
-      <div class="field"><label>热量 kcal</label><input id="kcal" type="number" inputmode="decimal"></div>
-      <div class="field"><label>蛋白质 g</label><input id="protein" type="number" inputmode="decimal"></div>
-      <div class="field"><label>碳水 g</label><input id="carbs" type="number" inputmode="decimal"></div>
-      <div class="field"><label>脂肪 g</label><input id="fat" type="number" inputmode="decimal"></div>
-      <div class="field"><label>纤维 g</label><input id="fiber" type="number" inputmode="decimal"></div>
-      <div class="field"><label>糖 g</label><input id="sugar" type="number" inputmode="decimal"></div>
-      <div class="field"><label>钠 mg</label><input id="sodium" type="number" inputmode="decimal"></div>
+<dialog id="addDialog">
+  <div class="sheet">
+    <div class="row">
+      <h2>添加食品</h2>
+      <button class="secondary small close">关闭</button>
     </div>
-    <div class="field"><label id="amountLabel">本次吃了多少 g / ml</label><input id="amount" type="number" inputmode="decimal" value="100"></div>
-    <div class="field"><label>餐次</label><select id="meal"><option>早餐</option><option>午餐</option><option>晚餐</option><option>加餐</option></select></div>
-    <button id="saveFoodBtn">加入今日</button>
-  </div>
-</div></dialog>
 
-<dialog id="settingsDialog"><div class="sheet"><div class="row"><h2>每日目标</h2><button class="secondary small close">关闭</button></div>
-  <div class="field"><label>热量 kcal</label><input id="goalKcal" type="number"></div>
-  <div class="field"><label>蛋白质 g</label><input id="goalProtein" type="number"></div>
-  <div class="field"><label>碳水 g</label><input id="goalCarbs" type="number"></div>
-  <div class="field"><label>脂肪 g</label><input id="goalFat" type="number"></div>
-  <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
-  <button id="saveGoalsBtn">保存目标</button>
-</div></dialog>
+    <div class="actions">
+      <button id="scanLabelBtn">从相册识别营养成分表</button>
+      <button class="secondary" id="manualBtn">手动添加</button>
+    </div>
+
+    <input id="imageInput" type="file" accept="image/*" class="hide" />
+
+    <div id="ocrArea" class="hide">
+      <div class="field"><label>图片</label><img class="preview" id="preview" alt="营养标签预览"></div>
+      <div class="status" id="ocrStatus">准备识别…</div>
+      <div class="field"><label>OCR 原始文本（可直接修改）</label><textarea id="ocrText"></textarea></div>
+      <button class="secondary" id="parseBtn">重新解析文本</button>
+    </div>
+
+    <div id="foodForm" class="hide">
+      <div class="field"><label>食品名称</label><input id="foodName" placeholder="例如：燕麦片"></div>
+
+      <div class="field">
+        <label>营养基准</label>
+        <select id="basis">
+          <option value="100">每 100g / 100ml</option>
+          <option value="serving">每份</option>
+        </select>
+      </div>
+
+      <div class="grid">
+        <div class="field">
+          <label>能量 kJ</label>
+          <input id="kj" type="number" inputmode="decimal" placeholder="例如：1250">
+          <div class="energy-preview">≈ <strong id="kcalPreview">0</strong> kcal</div>
+        </div>
+
+        <div class="field"><label>蛋白质 g</label><input id="protein" type="number" inputmode="decimal"></div>
+        <div class="field"><label>碳水 g</label><input id="carbs" type="number" inputmode="decimal"></div>
+        <div class="field"><label>脂肪 g</label><input id="fat" type="number" inputmode="decimal"></div>
+        <div class="field"><label>纤维 g</label><input id="fiber" type="number" inputmode="decimal"></div>
+        <div class="field"><label>糖 g</label><input id="sugar" type="number" inputmode="decimal"></div>
+        <div class="field"><label>钠 mg</label><input id="sodium" type="number" inputmode="decimal"></div>
+      </div>
+
+      <div class="field"><label id="amountLabel">本次吃了多少 g / ml</label><input id="amount" type="number" inputmode="decimal" value="100"></div>
+
+      <div class="meal-preview">
+        <div class="sub">本次预计摄入</div>
+        <strong><span id="mealKcalPreview">0</span> kcal</strong>
+        <div class="sub">≈ <span id="mealKjPreview">0</span> kJ</div>
+      </div>
+
+      <div class="field">
+        <label>餐次</label>
+        <select id="meal">
+          <option>早餐</option><option>午餐</option><option>晚餐</option><option>加餐</option>
+        </select>
+      </div>
+
+      <button id="saveFoodBtn">加入今日</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="settingsDialog">
+  <div class="sheet">
+    <div class="row">
+      <h2>每日目标</h2>
+      <button class="secondary small close">关闭</button>
+    </div>
+
+    <h3 class="section-title">自动计算推荐热量</h3>
+
+    <div class="grid">
+      <div class="field">
+        <label>性别（用于公式）</label>
+        <select id="calcSex">
+          <option value="male">男</option>
+          <option value="female">女</option>
+        </select>
+      </div>
+
+      <div class="field"><label>年龄</label><input id="calcAge" type="number" inputmode="numeric" placeholder="例如 30"></div>
+      <div class="field"><label>身高 cm</label><input id="calcHeight" type="number" inputmode="decimal" placeholder="例如 175"></div>
+      <div class="field"><label>体重 kg</label><input id="calcWeight" type="number" inputmode="decimal" placeholder="例如 70"></div>
+    </div>
+
+    <div class="field">
+      <label>活动量</label>
+      <select id="calcActivity">
+        <option value="1.2">久坐：几乎不运动</option>
+        <option value="1.375">轻度活动：每周约 1–3 天运动</option>
+        <option value="1.55" selected>中等活动：每周约 3–5 天运动</option>
+        <option value="1.725">高活动：每周约 6–7 天运动</option>
+        <option value="1.9">非常高活动：高强度训练或体力工作</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>目标</label>
+      <select id="calcGoal">
+        <option value="lose">减脂：推荐值约为维持热量 -15%</option>
+        <option value="maintain" selected>维持体重</option>
+        <option value="gain">增重：推荐值约为维持热量 +10%</option>
+      </select>
+    </div>
+
+    <button class="secondary" id="calculateGoalBtn">计算推荐热量</button>
+
+    <div id="calcResult" class="calc-box hide">
+      <div class="sub">基础代谢估算 BMR</div>
+      <div><span id="bmrResult">0</span> kcal / 天</div>
+
+      <div class="sub" style="margin-top:10px">维持热量估算 TDEE</div>
+      <div><span id="tdeeResult">0</span> kcal / 天</div>
+
+      <div class="sub" style="margin-top:10px">推荐每日目标</div>
+      <strong><span id="recommendedResult">0</span> kcal</strong>
+
+      <div style="margin-top:12px">
+        <button id="useRecommendedBtn">使用这个目标</button>
+      </div>
+    </div>
+
+    <div class="note">
+      自动计算只是估算值。实际能量需求会受体成分、日常活动、健康状况等影响；最终目标仍可在下面手动修改。
+    </div>
+
+    <h3 class="section-title">手动设置最终目标</h3>
+
+    <div class="field"><label>热量 kcal</label><input id="goalKcal" type="number"></div>
+    <div class="field"><label>蛋白质 g</label><input id="goalProtein" type="number"></div>
+    <div class="field"><label>碳水 g</label><input id="goalCarbs" type="number"></div>
+    <div class="field"><label>脂肪 g</label><input id="goalFat" type="number"></div>
+    <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
+
+    <button id="saveGoalsBtn">保存最终目标</button>
+  </div>
+</dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const dateKey=()=>new Date().toISOString().slice(0,10);
+
+const dateKey=()=>{
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
+
 const defaultGoals={kcal:2000,protein:120,carbs:220,fat:65,fiber:30};
-const goals=()=>({...defaultGoals,...JSON.parse(localStorage.getItem('nutriGoals')||'{}')});
-const entries=()=>JSON.parse(localStorage.getItem('nutriEntries')||'{}');
-const saveEntries=v=>localStorage.setItem('nutriEntries',JSON.stringify(v));
-const n=v=>Number(v)||0; const round=v=>Math.round((v+Number.EPSILON)*10)/10;
-function todayEntries(){return entries()[dateKey()]||[]}
+
+const goals=()=>({
+  ...defaultGoals,
+  ...JSON.parse(localStorage.getItem("nutriGoals")||"{}")
+});
+
+const entries=()=>JSON.parse(localStorage.getItem("nutriEntries")||"{}");
+const saveEntries=v=>localStorage.setItem("nutriEntries",JSON.stringify(v));
+const n=v=>Number(v)||0;
+const round=v=>Math.round((v+Number.EPSILON)*10)/10;
+const kjToKcal=kj=>kj/4.184;
+const kcalToKj=kcal=>kcal*4.184;
+
+function todayEntries(){
+  return entries()[dateKey()]||[];
+}
+
 function render(){
-  const d=new Date(); $('#todayLabel').textContent=d.toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
-  const g=goals(), list=todayEntries(); const t=list.reduce((a,x)=>({kcal:a.kcal+x.kcal,protein:a.protein+x.protein,carbs:a.carbs+x.carbs,fat:a.fat+x.fat,fiber:a.fiber+x.fiber}),{kcal:0,protein:0,carbs:0,fat:0,fiber:0});
-  ['kcal','protein','carbs','fat','fiber'].forEach(k=>{$('#'+(k==='carbs'?'carb':k)+'Now').textContent=round(t[k]); $('#'+(k==='carbs'?'carb':k)+'Goal').textContent=g[k]});
-  $('#kcalLeft').textContent=Math.max(0,round(g.kcal-t.kcal)); $('#kcalProgress').max=g.kcal; $('#kcalProgress').value=t.kcal;
-  const box=$('#foodList'); box.innerHTML='';
-  if(!list.length){box.innerHTML='<p class="sub" style="margin:14px 0 0">今天还没有记录。</p>'; return}
-  const groups={}; list.forEach((x,i)=>(groups[x.meal]??=[]).push({...x,_i:i}));
-  Object.entries(groups).forEach(([meal,items])=>{const h=document.createElement('div');h.innerHTML=`<h3 style="margin:16px 0 4px">${meal}</h3>`;box.appendChild(h);items.forEach(x=>{const r=document.createElement('div');r.className='food row';r.innerHTML=`<div><b>${x.name||'未命名食品'}</b><div class="sub">P ${round(x.protein)}g · C ${round(x.carbs)}g · F ${round(x.fat)}g</div></div><div style="text-align:right"><b>${round(x.kcal)} kcal</b><br><button class="secondary small" data-del="${x._i}">删除</button></div>`;box.appendChild(r)})});
-  $$('[data-del]').forEach(b=>b.onclick=()=>{const all=entries();all[dateKey()].splice(+b.dataset.del,1);saveEntries(all);render()});
+  const d=new Date();
+  $("#todayLabel").textContent=d.toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric",weekday:"long"});
+
+  const g=goals();
+  const list=todayEntries();
+
+  const t=list.reduce((a,x)=>({
+    kcal:a.kcal+n(x.kcal),
+    protein:a.protein+n(x.protein),
+    carbs:a.carbs+n(x.carbs),
+    fat:a.fat+n(x.fat),
+    fiber:a.fiber+n(x.fiber)
+  }),{kcal:0,protein:0,carbs:0,fat:0,fiber:0});
+
+  $("#kcalNow").textContent=round(t.kcal);
+  $("#kjNow").textContent=round(kcalToKj(t.kcal));
+  $("#kcalGoal").textContent=g.kcal;
+  $("#proteinNow").textContent=round(t.protein);
+  $("#proteinGoal").textContent=g.protein;
+  $("#carbNow").textContent=round(t.carbs);
+  $("#carbGoal").textContent=g.carbs;
+  $("#fatNow").textContent=round(t.fat);
+  $("#fatGoal").textContent=g.fat;
+  $("#fiberNow").textContent=round(t.fiber);
+  $("#fiberGoal").textContent=g.fiber;
+
+  $("#kcalLeft").textContent=Math.max(0,round(g.kcal-t.kcal));
+  $("#kcalProgress").max=g.kcal;
+  $("#kcalProgress").value=t.kcal;
+
+  const box=$("#foodList");
+  box.innerHTML="";
+
+  if(!list.length){
+    box.innerHTML='<p class="sub" style="margin:14px 0 0">今天还没有记录。</p>';
+    return;
+  }
+
+  const groups={};
+  list.forEach((x,i)=>(groups[x.meal]??=[]).push({...x,_i:i}));
+
+  Object.entries(groups).forEach(([meal,items])=>{
+    const h=document.createElement("div");
+    h.innerHTML=`<h3 style="margin:16px 0 4px">${meal}</h3>`;
+    box.appendChild(h);
+
+    items.forEach(x=>{
+      const r=document.createElement("div");
+      r.className="food row";
+      const itemKj=x.kj?n(x.kj):kcalToKj(n(x.kcal));
+
+      r.innerHTML=`
+        <div>
+          <b>${x.name||"未命名食品"}</b>
+          <div class="sub">P ${round(x.protein)}g · C ${round(x.carbs)}g · F ${round(x.fat)}g</div>
+        </div>
+        <div style="text-align:right">
+          <b>${round(x.kcal)} kcal</b>
+          <div class="sub">${round(itemKj)} kJ</div>
+          <button class="secondary small" data-del="${x._i}">删除</button>
+        </div>
+      `;
+      box.appendChild(r);
+    });
+  });
+
+  $$("[data-del]").forEach(b=>b.onclick=()=>{
+    const all=entries();
+    all[dateKey()].splice(+b.dataset.del,1);
+    saveEntries(all);
+    render();
+  });
 }
-function resetForm(){['foodName','kcal','protein','carbs','fat','fiber','sugar','sodium'].forEach(id=>$('#'+id).value='');$('#amount').value='100';$('#basis').value='100';$('#ocrArea').classList.add('hide');$('#foodForm').classList.add('hide');}
-$('#addBtn').onclick=()=>{resetForm();$('#addDialog').showModal()};
-$$('.close').forEach(b=>b.onclick=()=>b.closest('dialog').close());
-$('#manualBtn').onclick=()=>{$('#foodForm').classList.remove('hide')};
-$('#scanLabelBtn').onclick=()=>$('#imageInput').click();
-$('#basis').onchange=()=>{$('#amountLabel').textContent=$('#basis').value==='100'?'本次吃了多少 g / ml':'本次吃了多少份'; if($('#basis').value==='serving' && $('#amount').value==='100') $('#amount').value='1'};
-$('#imageInput').onchange=async e=>{
- const file=e.target.files[0]; if(!file)return; $('#ocrArea').classList.remove('hide'); $('#foodForm').classList.remove('hide'); $('#preview').src=URL.createObjectURL(file); $('#ocrStatus').textContent='正在本机浏览器中识别文字…首次使用会加载 OCR 模型。';
- try{const res=await Tesseract.recognize(file,'eng+chi_sim',{logger:m=>{if(m.progress)$('#ocrStatus').textContent=`OCR ${Math.round(m.progress*100)}% · ${m.status}`}});$('#ocrText').value=res.data.text;parseNutrition(res.data.text);$('#ocrStatus').textContent='识别完成，请核对数值后保存。'}catch(err){$('#ocrStatus').textContent='OCR 未完成。你仍可手动填写，或检查网络后重试。';console.error(err)}
+
+function resetForm(){
+  ["foodName","kj","protein","carbs","fat","fiber","sugar","sodium"].forEach(id=>$("#"+id).value="");
+  $("#kcalPreview").textContent="0";
+  $("#mealKcalPreview").textContent="0";
+  $("#mealKjPreview").textContent="0";
+  $("#amount").value="100";
+  $("#basis").value="100";
+  $("#amountLabel").textContent="本次吃了多少 g / ml";
+  $("#ocrArea").classList.add("hide");
+  $("#foodForm").classList.add("hide");
+  $("#imageInput").value="";
+}
+
+$("#addBtn").onclick=()=>{
+  resetForm();
+  $("#addDialog").showModal();
 };
-function findNum(text,patterns){for(const p of patterns){const m=text.match(p);if(m)return n(String(m[1]).replace(',','.'))}return 0}
+
+$$(".close").forEach(b=>b.onclick=()=>b.closest("dialog").close());
+
+$("#manualBtn").onclick=()=>{
+  $("#foodForm").classList.remove("hide");
+};
+
+$("#scanLabelBtn").onclick=()=>$("#imageInput").click();
+
+function updateEnergyPreview(){
+  const kj=n($("#kj").value);
+  const kcal=kjToKcal(kj);
+
+  $("#kcalPreview").textContent=round(kcal);
+
+  const basis=$("#basis").value;
+  const amount=n($("#amount").value);
+  const factor=basis==="100"?amount/100:amount;
+
+  $("#mealKjPreview").textContent=round(kj*factor);
+  $("#mealKcalPreview").textContent=round(kcal*factor);
+}
+
+$("#kj").addEventListener("input",updateEnergyPreview);
+$("#amount").addEventListener("input",updateEnergyPreview);
+
+$("#basis").onchange=()=>{
+  if($("#basis").value==="100"){
+    $("#amountLabel").textContent="本次吃了多少 g / ml";
+    if($("#amount").value==="1")$("#amount").value="100";
+  }else{
+    $("#amountLabel").textContent="本次吃了多少份";
+    if($("#amount").value==="100")$("#amount").value="1";
+  }
+  updateEnergyPreview();
+};
+
+$("#imageInput").onchange=async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+
+  $("#ocrArea").classList.remove("hide");
+  $("#foodForm").classList.remove("hide");
+  $("#preview").src=URL.createObjectURL(file);
+  $("#ocrStatus").textContent="正在本机浏览器中识别文字…首次使用会加载 OCR 模型。";
+
+  try{
+    const res=await Tesseract.recognize(file,"eng+chi_sim",{
+      logger:m=>{
+        if(m.progress)$("#ocrStatus").textContent=`OCR ${Math.round(m.progress*100)}% · ${m.status}`;
+      }
+    });
+
+    $("#ocrText").value=res.data.text;
+    parseNutrition(res.data.text);
+    $("#ocrStatus").textContent="识别完成，请核对数值后保存。";
+  }catch(err){
+    $("#ocrStatus").textContent="OCR 未完成。你仍可手动填写，或检查网络后重试。";
+    console.error(err);
+  }
+};
+
+function findNum(text,patterns){
+  for(const p of patterns){
+    const m=text.match(p);
+    if(m)return n(String(m[1]).replace(",","."));
+  }
+  return 0;
+}
+
 function parseNutrition(text){
- const s=text.replace(/\r/g,' ').replace(/[：:]/g,':');
- let kcal=findNum(s,[/(?:energy|calories|热量|能量)[^\n]{0,30}?(\d+(?:[\.,]\d+)?)\s*kcal/i,/(\d+(?:[\.,]\d+)?)\s*kcal/i]);
- if(!kcal){const kj=findNum(s,[/(?:energy|能量)[^\n]{0,30}?(\d+(?:[\.,]\d+)?)\s*kj/i,/(\d+(?:[\.,]\d+)?)\s*kj/i]); if(kj) kcal=round(kj/4.184)}
- const vals={kcal,protein:findNum(s,[/(?:protein|蛋白质)[^\n\d]{0,12}(\d+(?:[\.,]\d+)?)/i]),carbs:findNum(s,[/(?:carbohydrate|carbohydrates|碳水化合物|碳水)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),fat:findNum(s,[/(?:total fat|fat|脂肪)[^\n\d]{0,12}(\d+(?:[\.,]\d+)?)/i]),fiber:findNum(s,[/(?:dietary fiber|fibre|fiber|膳食纤维)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),sugar:findNum(s,[/(?:sugars|sugar|糖)[^\n\d]{0,12}(\d+(?:[\.,]\d+)?)/i]),sodium:findNum(s,[/(?:sodium|钠)[^\n\d]{0,12}(\d+(?:[\.,]\d+)?)/i])};
- Object.entries(vals).forEach(([k,v])=>$('#'+k).value=v||'');
- if(/per\s*100\s*(g|ml)|每\s*100\s*(克|g|毫升|ml)/i.test(s)){$('#basis').value='100';$('#amount').value='100'} else if(/per\s*serv|每份|serving/i.test(s)){$('#basis').value='serving';$('#amount').value='1'}
+  const s=text.replace(/\r/g," ").replace(/[：:]/g,":");
+
+  let kj=findNum(s,[
+    /(?:energy|能量|热量)[^\n]{0,40}?(\d+(?:[\.,]\d+)?)\s*k\s*j/i,
+    /(\d+(?:[\.,]\d+)?)\s*k\s*j/i
+  ]);
+
+  if(!kj){
+    const kcal=findNum(s,[
+      /(?:energy|calories|热量|能量)[^\n]{0,40}?(\d+(?:[\.,]\d+)?)\s*kcal/i,
+      /(\d+(?:[\.,]\d+)?)\s*kcal/i
+    ]);
+    if(kcal)kj=round(kcalToKj(kcal));
+  }
+
+  const vals={
+    kj,
+    protein:findNum(s,[/(?:protein|蛋白质)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
+    carbs:findNum(s,[/(?:carbohydrate|carbohydrates|碳水化合物|碳水)[^\n\d]{0,20}(\d+(?:[\.,]\d+)?)/i]),
+    fat:findNum(s,[/(?:total fat|fat|脂肪)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
+    fiber:findNum(s,[/(?:dietary fiber|fibre|fiber|膳食纤维)[^\n\d]{0,20}(\d+(?:[\.,]\d+)?)/i]),
+    sugar:findNum(s,[/(?:sugars|sugar|糖)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
+    sodium:findNum(s,[/(?:sodium|钠)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i])
+  };
+
+  Object.entries(vals).forEach(([k,v])=>$("#"+k).value=v||"");
+
+  if(/per\s*100\s*(g|ml)|每\s*100\s*(克|g|毫升|ml)/i.test(s)){
+    $("#basis").value="100";
+    $("#amount").value="100";
+    $("#amountLabel").textContent="本次吃了多少 g / ml";
+  }else if(/per\s*serv|每份|serving/i.test(s)){
+    $("#basis").value="serving";
+    $("#amount").value="1";
+    $("#amountLabel").textContent="本次吃了多少份";
+  }
+
+  updateEnergyPreview();
 }
-$('#parseBtn').onclick=()=>parseNutrition($('#ocrText').value);
-$('#saveFoodBtn').onclick=()=>{
- const basis=$('#basis').value, amount=n($('#amount').value), factor=basis==='100'?amount/100:amount; if(factor<=0)return alert('请输入实际食用量。');
- const item={name:$('#foodName').value.trim()||'食品',meal:$('#meal').value,amount,basis,kcal:round(n($('#kcal').value)*factor),protein:round(n($('#protein').value)*factor),carbs:round(n($('#carbs').value)*factor),fat:round(n($('#fat').value)*factor),fiber:round(n($('#fiber').value)*factor),sugar:round(n($('#sugar').value)*factor),sodium:round(n($('#sodium').value)*factor),createdAt:Date.now()};
- const all=entries();(all[dateKey()]??=[]).push(item);saveEntries(all);$('#addDialog').close();render();
+
+$("#parseBtn").onclick=()=>parseNutrition($("#ocrText").value);
+
+$("#saveFoodBtn").onclick=()=>{
+  const basis=$("#basis").value;
+  const amount=n($("#amount").value);
+  const factor=basis==="100"?amount/100:amount;
+
+  if(factor<=0)return alert("请输入实际食用量。");
+
+  const kjBase=n($("#kj").value);
+  if(kjBase<=0)return alert("请输入食品能量 kJ。");
+
+  const actualKj=kjBase*factor;
+  const actualKcal=kjToKcal(actualKj);
+
+  const item={
+    name:$("#foodName").value.trim()||"食品",
+    meal:$("#meal").value,
+    amount,
+    basis,
+    kj:round(actualKj),
+    kcal:round(actualKcal),
+    protein:round(n($("#protein").value)*factor),
+    carbs:round(n($("#carbs").value)*factor),
+    fat:round(n($("#fat").value)*factor),
+    fiber:round(n($("#fiber").value)*factor),
+    sugar:round(n($("#sugar").value)*factor),
+    sodium:round(n($("#sodium").value)*factor),
+    createdAt:Date.now()
+  };
+
+  const all=entries();
+  (all[dateKey()]??=[]).push(item);
+  saveEntries(all);
+  $("#addDialog").close();
+  render();
 };
-$('#clearTodayBtn').onclick=()=>{if(confirm('确定清空今天所有记录吗？')){const all=entries();delete all[dateKey()];saveEntries(all);render()}};
-$('#settingsBtn').onclick=()=>{const g=goals();$('#goalKcal').value=g.kcal;$('#goalProtein').value=g.protein;$('#goalCarbs').value=g.carbs;$('#goalFat').value=g.fat;$('#goalFiber').value=g.fiber;$('#settingsDialog').showModal()};
-$('#saveGoalsBtn').onclick=()=>{localStorage.setItem('nutriGoals',JSON.stringify({kcal:n($('#goalKcal').value),protein:n($('#goalProtein').value),carbs:n($('#goalCarbs').value),fat:n($('#goalFat').value),fiber:n($('#goalFiber').value)}));$('#settingsDialog').close();render()};
-if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
+
+$("#clearTodayBtn").onclick=()=>{
+  if(confirm("确定清空今天所有记录吗？")){
+    const all=entries();
+    delete all[dateKey()];
+    saveEntries(all);
+    render();
+  }
+};
+
+/* ---------- 自动热量目标 ---------- */
+
+function saveProfile(){
+  const profile={
+    sex:$("#calcSex").value,
+    age:n($("#calcAge").value),
+    height:n($("#calcHeight").value),
+    weight:n($("#calcWeight").value),
+    activity:n($("#calcActivity").value),
+    goal:$("#calcGoal").value
+  };
+  localStorage.setItem("nutriProfile",JSON.stringify(profile));
+}
+
+function loadProfile(){
+  const p=JSON.parse(localStorage.getItem("nutriProfile")||"{}");
+  if(p.sex)$("#calcSex").value=p.sex;
+  if(p.age)$("#calcAge").value=p.age;
+  if(p.height)$("#calcHeight").value=p.height;
+  if(p.weight)$("#calcWeight").value=p.weight;
+  if(p.activity)$("#calcActivity").value=String(p.activity);
+  if(p.goal)$("#calcGoal").value=p.goal;
+}
+
+function calculateRecommendation(){
+  const sex=$("#calcSex").value;
+  const age=n($("#calcAge").value);
+  const height=n($("#calcHeight").value);
+  const weight=n($("#calcWeight").value);
+  const activity=n($("#calcActivity").value);
+  const goal=$("#calcGoal").value;
+
+  if(age<=0||height<=0||weight<=0){
+    alert("请填写年龄、身高和体重。");
+    return null;
+  }
+
+  // Mifflin–St Jeor
+  let bmr=10*weight+6.25*height-5*age+(sex==="male"?5:-161);
+
+  const tdee=bmr*activity;
+
+  let recommended=tdee;
+  if(goal==="lose")recommended=tdee*0.85;
+  if(goal==="gain")recommended=tdee*1.10;
+
+  bmr=Math.round(bmr);
+  const tdeeRounded=Math.round(tdee);
+  recommended=Math.round(recommended/10)*10;
+
+  $("#bmrResult").textContent=bmr;
+  $("#tdeeResult").textContent=tdeeRounded;
+  $("#recommendedResult").textContent=recommended;
+  $("#calcResult").classList.remove("hide");
+
+  saveProfile();
+
+  return recommended;
+}
+
+$("#calculateGoalBtn").onclick=calculateRecommendation;
+
+$("#useRecommendedBtn").onclick=()=>{
+  const value=n($("#recommendedResult").textContent);
+  if(value>0)$("#goalKcal").value=value;
+};
+
+$("#settingsBtn").onclick=()=>{
+  const g=goals();
+
+  $("#goalKcal").value=g.kcal;
+  $("#goalProtein").value=g.protein;
+  $("#goalCarbs").value=g.carbs;
+  $("#goalFat").value=g.fat;
+  $("#goalFiber").value=g.fiber;
+
+  loadProfile();
+  $("#calcResult").classList.add("hide");
+  $("#settingsDialog").showModal();
+};
+
+$("#saveGoalsBtn").onclick=()=>{
+  localStorage.setItem("nutriGoals",JSON.stringify({
+    kcal:n($("#goalKcal").value),
+    protein:n($("#goalProtein").value),
+    carbs:n($("#goalCarbs").value),
+    fat:n($("#goalFat").value),
+    fiber:n($("#goalFiber").value)
+  }));
+
+  saveProfile();
+  $("#settingsDialog").close();
+  render();
+};
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js"));
+}
+
 render();
 </script>
 </body>
