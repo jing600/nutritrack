@@ -163,7 +163,29 @@
     <input id="imageInput" type="file" accept="image/*" class="hide" />
 
     <div id="ocrArea" class="hide">
-      <div class="field"><label>图片</label><img class="preview" id="preview" alt="营养标签预览"></div>
+      <div class="field">
+        <label>营养表图片</label>
+        <img class="preview" id="preview" alt="营养标签预览">
+      </div>
+
+      <div class="note">
+        <b>强化识别：</b>如果整张包装识别不好，点击“裁剪营养表”，然后在图片上拖动框选营养成分表。程序会自动放大、灰度化、增强对比度后再识别。
+      </div>
+
+      <div class="actions">
+        <button class="secondary" id="autoEnhanceBtn">整图强化识别</button>
+        <button class="secondary" id="cropOcrBtn">裁剪营养表</button>
+      </div>
+
+      <div id="cropArea" class="hide">
+        <div class="sub" style="margin:8px 0">在图片上拖动框选营养成分表：</div>
+        <canvas id="cropCanvas" style="width:100%;max-height:55vh;border:1px solid #ddd;border-radius:12px;touch-action:none"></canvas>
+        <div class="actions" style="margin-top:8px">
+          <button id="recognizeCropBtn">识别选中区域</button>
+          <button class="secondary" id="cancelCropBtn">取消裁剪</button>
+        </div>
+      </div>
+
       <div class="status" id="ocrStatus">准备识别…</div>
       <div class="field"><label>OCR 原始文本（可直接修改）</label><textarea id="ocrText"></textarea></div>
       <button class="secondary" id="parseBtn">重新解析文本</button>
@@ -838,77 +860,381 @@ $("#basis").onchange=()=>{
   updateEnergyPreview();
 };
 
+
+let ocrImageBitmap=null;
+let cropSelection=null;
+let cropDragging=false;
+let cropStart=null;
+
+async function loadImageBitmapFromFile(file){
+  try{
+    return await createImageBitmap(file);
+  }catch(_){
+    const img=new Image();
+    img.src=URL.createObjectURL(file);
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve;
+      img.onerror=reject;
+    });
+    return img;
+  }
+}
+
+function drawCropCanvas(){
+  if(!ocrImageBitmap)return;
+
+  const canvas=$("#cropCanvas");
+  const ctx=canvas.getContext("2d");
+
+  const iw=ocrImageBitmap.width;
+  const ih=ocrImageBitmap.height;
+  const maxW=900;
+  const scale=Math.min(1,maxW/iw);
+
+  canvas.width=Math.round(iw*scale);
+  canvas.height=Math.round(ih*scale);
+
+  ctx.drawImage(ocrImageBitmap,0,0,canvas.width,canvas.height);
+
+  if(cropSelection){
+    const {x,y,w,h}=cropSelection;
+    ctx.save();
+    ctx.fillStyle="rgba(0,0,0,.35)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.clearRect(x,y,w,h);
+    ctx.drawImage(
+      ocrImageBitmap,
+      x/scale,y/scale,w/scale,h/scale,
+      x,y,w,h
+    );
+    ctx.strokeStyle="#ffcc00";
+    ctx.lineWidth=3;
+    ctx.strokeRect(x,y,w,h);
+    ctx.restore();
+  }
+}
+
+function canvasPoint(ev){
+  const canvas=$("#cropCanvas");
+  const r=canvas.getBoundingClientRect();
+  const p=ev.touches?.[0] || ev.changedTouches?.[0] || ev;
+  return {
+    x:(p.clientX-r.left)*(canvas.width/r.width),
+    y:(p.clientY-r.top)*(canvas.height/r.height)
+  };
+}
+
+function beginCrop(ev){
+  ev.preventDefault();
+  cropDragging=true;
+  cropStart=canvasPoint(ev);
+  cropSelection={x:cropStart.x,y:cropStart.y,w:1,h:1};
+  drawCropCanvas();
+}
+
+function moveCrop(ev){
+  if(!cropDragging)return;
+  ev.preventDefault();
+
+  const p=canvasPoint(ev);
+  cropSelection={
+    x:Math.min(cropStart.x,p.x),
+    y:Math.min(cropStart.y,p.y),
+    w:Math.abs(p.x-cropStart.x),
+    h:Math.abs(p.y-cropStart.y)
+  };
+  drawCropCanvas();
+}
+
+function endCrop(ev){
+  if(!cropDragging)return;
+  ev.preventDefault();
+  moveCrop(ev);
+  cropDragging=false;
+}
+
+function preprocessImage(source, selection=null){
+  const srcW=source.width;
+  const srcH=source.height;
+
+  let sx=0,sy=0,sw=srcW,sh=srcH;
+
+  if(selection){
+    const displayCanvas=$("#cropCanvas");
+    const scaleX=srcW/displayCanvas.width;
+    const scaleY=srcH/displayCanvas.height;
+
+    sx=Math.max(0,Math.round(selection.x*scaleX));
+    sy=Math.max(0,Math.round(selection.y*scaleY));
+    sw=Math.max(1,Math.round(selection.w*scaleX));
+    sh=Math.max(1,Math.round(selection.h*scaleY));
+  }
+
+  // 至少放大 2.5 倍，小字标签尽量放到 1800~2600px 宽
+  const targetW=Math.min(2800,Math.max(1800,sw*2.5));
+  const scale=targetW/sw;
+  const targetH=Math.round(sh*scale);
+
+  const c=document.createElement("canvas");
+  c.width=Math.round(targetW);
+  c.height=targetH;
+
+  const ctx=c.getContext("2d",{willReadFrequently:true});
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality="high";
+  ctx.drawImage(source,sx,sy,sw,sh,0,0,c.width,c.height);
+
+  const img=ctx.getImageData(0,0,c.width,c.height);
+  const d=img.data;
+
+  // 灰度 + 自动对比度 + 轻度二值化，针对彩色包装上的小字
+  let min=255,max=0;
+  const gray=new Uint8ClampedArray(c.width*c.height);
+
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    const g=Math.round(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114);
+    gray[j]=g;
+    if(g<min)min=g;
+    if(g>max)max=g;
+  }
+
+  const range=Math.max(35,max-min);
+
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    let g=(gray[j]-min)*255/range;
+    // 提升局部文字对比度，但避免把浅色字完全抹掉
+    g=(g-128)*1.45+128;
+    g=Math.max(0,Math.min(255,g));
+
+    if(g>215)g=255;
+    else if(g<45)g=0;
+
+    d[i]=d[i+1]=d[i+2]=g;
+    d[i+3]=255;
+  }
+
+  ctx.putImageData(img,0,0);
+  return c;
+}
+
+async function recognizeCanvas(canvas,label){
+  $("#ocrStatus").textContent=`${label}：正在加载 OCR…`;
+
+  const res=await Tesseract.recognize(canvas,"eng+chi_sim",{
+    logger:m=>{
+      if(m.progress){
+        $("#ocrStatus").textContent=
+          `${label} · ${Math.round(m.progress*100)}% · ${m.status}`;
+      }
+    }
+  });
+
+  const text=res.data.text||"";
+  $("#ocrText").value=text;
+  const parsed=parseNutrition(text);
+
+  const found=[
+    parsed.kj,
+    parsed.protein,
+    parsed.carbs,
+    parsed.fat,
+    parsed.fiber,
+    parsed.sodium
+  ].filter(v=>v!=="" && v!==null && v!==undefined && Number(v)!==0).length;
+
+  $("#ocrStatus").textContent=
+    found>=3
+      ? `识别完成，已找到 ${found} 项营养数值。请核对后保存。`
+      : "识别完成，但有效数值较少。建议点击“裁剪营养表”只框选表格后再识别。";
+}
+
 $("#imageInput").onchange=async e=>{
   const file=e.target.files[0];
   if(!file)return;
 
   $("#ocrArea").classList.remove("hide");
   $("#foodForm").classList.remove("hide");
-  $("#preview").src=URL.createObjectURL(file);
-  $("#ocrStatus").textContent="正在本机浏览器中识别文字…首次使用会加载 OCR 模型。";
+
+  const url=URL.createObjectURL(file);
+  $("#preview").src=url;
+  $("#ocrStatus").textContent="图片已载入，正在准备强化识别…";
 
   try{
-    const res=await Tesseract.recognize(file,"eng+chi_sim",{
-      logger:m=>{
-        if(m.progress)$("#ocrStatus").textContent=`OCR ${Math.round(m.progress*100)}% · ${m.status}`;
-      }
-    });
-    $("#ocrText").value=res.data.text;
-    parseNutrition(res.data.text);
-    $("#ocrStatus").textContent="识别完成，请核对数值后保存。";
+    ocrImageBitmap=await loadImageBitmapFromFile(file);
+    cropSelection=null;
+    const enhanced=preprocessImage(ocrImageBitmap);
+    await recognizeCanvas(enhanced,"整图强化识别");
   }catch(err){
-    $("#ocrStatus").textContent="OCR 未完成。你仍可手动填写，或检查网络后重试。";
     console.error(err);
+    $("#ocrStatus").textContent=
+      "整图识别失败。请点击“裁剪营养表”，只框选营养成分表后重试。";
   }
 };
 
-function findNum(text,patterns){
-  for(const p of patterns){
-    const m=text.match(p);
-    if(m)return n(String(m[1]).replace(",","."));
+$("#autoEnhanceBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return alert("请先选择营养成分表图片。");
+
+  try{
+    const enhanced=preprocessImage(ocrImageBitmap);
+    await recognizeCanvas(enhanced,"整图强化识别");
+  }catch(err){
+    console.error(err);
+    $("#ocrStatus").textContent="强化识别失败，请尝试裁剪营养表。";
   }
+};
+
+$("#cropOcrBtn").onclick=()=>{
+  if(!ocrImageBitmap)return alert("请先选择图片。");
+  $("#cropArea").classList.remove("hide");
+  cropSelection=null;
+  drawCropCanvas();
+  $("#cropArea").scrollIntoView({behavior:"smooth",block:"nearest"});
+};
+
+$("#cancelCropBtn").onclick=()=>{
+  $("#cropArea").classList.add("hide");
+  cropSelection=null;
+};
+
+$("#recognizeCropBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return;
+
+  if(!cropSelection || cropSelection.w<30 || cropSelection.h<30){
+    return alert("请先在图片上拖动框选营养成分表。");
+  }
+
+  try{
+    const enhanced=preprocessImage(ocrImageBitmap,cropSelection);
+    $("#cropArea").classList.add("hide");
+    await recognizeCanvas(enhanced,"营养表区域强化识别");
+  }catch(err){
+    console.error(err);
+    $("#ocrStatus").textContent="裁剪区域识别失败，请重新框选稍大一点的区域。";
+  }
+};
+
+(()=>{
+  const c=$("#cropCanvas");
+  c.addEventListener("mousedown",beginCrop);
+  c.addEventListener("mousemove",moveCrop);
+  window.addEventListener("mouseup",endCrop);
+  c.addEventListener("touchstart",beginCrop,{passive:false});
+  c.addEventListener("touchmove",moveCrop,{passive:false});
+  c.addEventListener("touchend",endCrop,{passive:false});
+})();
+
+function cleanOcrText(text){
+  return text
+    .replace(/\r/g,"\n")
+    .replace(/[：﹕]/g,":")
+    .replace(/[，]/g,",")
+    .replace(/[。]/g,".")
+    .replace(/[ＯO](?=\d)/g,"0")
+    .replace(/(?<=\d)[ＯO]/g,"0")
+    .replace(/[丨Il](?=\d)/g,"1")
+    .replace(/(?<=\d)[丨Il]/g,"1");
+}
+
+function firstPlausibleAfterKeyword(text,keywords,unitPattern=""){
+  const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+
+  for(const line of lines){
+    if(!keywords.some(k=>k.test(line)))continue;
+
+    let candidate=line;
+
+    // 避开 NRV% 列，优先取关键词之后的第一个数值
+    const keywordIndex=Math.max(...keywords.map(k=>{
+      const m=line.match(k);
+      return m ? m.index + m[0].length : -1;
+    }));
+
+    if(keywordIndex>=0)candidate=line.slice(keywordIndex);
+
+    const re=unitPattern
+      ? new RegExp(`(\\d+(?:[\\.,]\\d+)?)\\s*${unitPattern}`,"i")
+      : /(\d+(?:[\.,]\d+)?)/;
+
+    const m=candidate.match(re);
+    if(m)return Number(String(m[1]).replace(",","."));
+  }
+
   return 0;
 }
 
 function parseNutrition(text){
-  const s=text.replace(/\r/g," ").replace(/[：:]/g,":");
+  const s=cleanOcrText(text);
 
-  let kj=findNum(s,[
-    /(?:energy|能量|热量)[^\n]{0,40}?(\d+(?:[\.,]\d+)?)\s*k\s*j/i,
-    /(\d+(?:[\.,]\d+)?)\s*k\s*j/i
-  ]);
+  // 识别“每30g / 每25克 / per 40g”等任意营养基准
+  let baseAmount=100;
+  let baseUnit="g";
+
+  const baseMatch=s.match(
+    /(?:每|per\s*)(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)/i
+  );
+
+  if(baseMatch){
+    baseAmount=Number(baseMatch[1]);
+    baseUnit=/ml|毫升/i.test(baseMatch[2]) ? "ml" : "g";
+  }else if(/每份|per\s*serv|serving/i.test(s)){
+    baseAmount=null;
+  }
+
+  let kj=firstPlausibleAfterKeyword(
+    s,
+    [/能量/i,/energy/i],
+    "k\\s*j"
+  );
 
   if(!kj){
-    const kcal=findNum(s,[
-      /(?:energy|calories|热量|能量)[^\n]{0,40}?(\d+(?:[\.,]\d+)?)\s*kcal/i,
-      /(\d+(?:[\.,]\d+)?)\s*kcal/i
-    ]);
+    const kcal=firstPlausibleAfterKeyword(
+      s,
+      [/能量/i,/热量/i,/energy/i,/calories/i],
+      "k\\s*cal"
+    );
     if(kcal)kj=round(kcalToKj(kcal));
   }
 
   const vals={
-    kj,
-    protein:findNum(s,[/(?:protein|蛋白质)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
-    carbs:findNum(s,[/(?:carbohydrate|carbohydrates|碳水化合物|碳水)[^\n\d]{0,20}(\d+(?:[\.,]\d+)?)/i]),
-    fat:findNum(s,[/(?:total fat|fat|脂肪)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
-    fiber:findNum(s,[/(?:dietary fiber|fibre|fiber|膳食纤维)[^\n\d]{0,20}(\d+(?:[\.,]\d+)?)/i]),
-    sugar:findNum(s,[/(?:sugars|sugar|糖)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i]),
-    sodium:findNum(s,[/(?:sodium|钠)[^\n\d]{0,16}(\d+(?:[\.,]\d+)?)/i])
+    kj:kj||0,
+    protein:firstPlausibleAfterKeyword(s,[/蛋白质/i,/protein/i],"g"),
+    fat:firstPlausibleAfterKeyword(s,[/脂肪/i,/fat/i],"g"),
+    carbs:firstPlausibleAfterKeyword(s,[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"g"),
+    fiber:firstPlausibleAfterKeyword(s,[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"g"),
+    sugar:firstPlausibleAfterKeyword(s,[/糖/i,/sugars?/i],"g"),
+    sodium:firstPlausibleAfterKeyword(s,[/钠/i,/sodium/i],"m\\s*g")
   };
 
-  Object.entries(vals).forEach(([k,v])=>$("#"+k).value=v||"");
+  // 如果标签是每 X g / ml，统一转换成每100g / 100ml
+  if(baseAmount && baseAmount>0 && baseAmount!==100){
+    const scale=100/baseAmount;
 
-  if(/per\s*100\s*(g|ml)|每\s*100\s*(克|g|毫升|ml)/i.test(s)){
+    for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
+      if(vals[k])vals[k]=round(vals[k]*scale);
+    }
+
+    $("#basis").value="100";
+    $("#amount").value=String(baseAmount);
+    $("#amountLabel").textContent=`本次吃了多少 ${baseUnit}（标签原始基准：每 ${baseAmount}${baseUnit}）`;
+
+    $("#ocrStatus").textContent=
+      `识别到标签基准：每 ${baseAmount}${baseUnit}。已自动换算为每100${baseUnit}数据。`;
+  }else if(baseAmount===100){
     $("#basis").value="100";
     $("#amount").value="100";
     $("#amountLabel").textContent="本次吃了多少 g / ml";
-  }else if(/per\s*serv|每份|serving/i.test(s)){
+  }else{
     $("#basis").value="serving";
     $("#amount").value="1";
     $("#amountLabel").textContent="本次吃了多少份";
   }
 
+  Object.entries(vals).forEach(([k,v])=>{
+    $("#"+k).value=v||"";
+  });
+
   updateEnergyPreview();
+  return vals;
 }
 
 $("#parseBtn").onclick=()=>parseNutrition($("#ocrText").value);
