@@ -334,7 +334,14 @@
       自动计算只是估算值。实际能量需求会受体成分、日常活动、健康状况等影响；最终目标仍可在下面手动修改。
     </div>
 
-    <h3 class="section-title">手动设置最终目标</h3>
+    <h3 class="section-title">中国商品条码查询（可选）</h3>
+<div class="field">
+  <label>聚合数据 AppKey</label>
+  <input id="juheAppKey" type="password" autocomplete="off" placeholder="未配置时自动跳过中国商品查询">
+</div>
+<div class="sub">用于优先查询中国包装商品名称等基础信息。Key 只保存在当前手机浏览器本地。</div>
+<div class="note">该接口主要识别商品名称/规格，不保证有营养成分；营养仍优先以包装 OCR 为准。</div>
+<h3 class="section-title">手动设置最终目标</h3>
     <div class="field"><label>热量 kcal</label><input id="goalKcal" type="number"></div>
     <div class="field"><label>蛋白质 g</label><input id="goalProtein" type="number"></div>
     <div class="field"><label>碳水 g</label><input id="goalCarbs" type="number"></div>
@@ -372,6 +379,8 @@ let barcodeScanner=null;
 
 const productDb=()=>JSON.parse(localStorage.getItem("nutriProducts")||"{}");
 const saveProductDb=v=>localStorage.setItem("nutriProducts",JSON.stringify(v));
+const appConfig=()=>JSON.parse(localStorage.getItem("nutriConfig")||"{}");
+const saveAppConfig=v=>localStorage.setItem("nutriConfig",JSON.stringify(v));
 
 function totalsFor(list){
   return list.reduce((a,x)=>({
@@ -610,18 +619,54 @@ async function lookupBarcode(code){
   }
 
   currentBarcode=code;
-  $("#barcodeStatus").textContent="正在查询本地商品库…";
 
+  $("#barcodeStatus").textContent="正在查询你的本地商品库…";
   const local=productDb()[code];
   if(local){
-    $("#barcodeStatus").textContent="已从你的本地商品库找到。";
     stopBarcodeScanner();
     $("#barcodeDialog").close();
     setFoodFormFromProduct(local,"本地商品库");
     return;
   }
 
-  $("#barcodeStatus").textContent="本地没有，正在查询 Open Food Facts…";
+  let chinaProductName="";
+  let chinaLookupNote="";
+  const cfg=appConfig();
+  const juheKey=String(cfg.juheAppKey||"").trim();
+
+  if(juheKey){
+    $("#barcodeStatus").textContent="本地没有，正在查询中国商品条码数据库…";
+    try{
+      const juheUrl=
+        `https://api.juheapi.com/jhbar/bar?appkey=${encodeURIComponent(juheKey)}`+
+        `&barcode=${encodeURIComponent(code)}&cityid=1`;
+
+      const response=await fetch(juheUrl,{headers:{"Accept":"application/json"}});
+      if(response.ok){
+        const data=await response.json();
+        if(Number(data.error_code)===0 && data.result && data.result.summary){
+          chinaProductName=data.result.summary.name||"";
+          if(chinaProductName){
+            $("#foodName").value=chinaProductName;
+            $("#foodForm").classList.remove("hide");
+            showProductMeta(code,"中国商品条码数据库");
+            chinaLookupNote="已识别中国商品名称";
+          }
+        }else{
+          chinaLookupNote=`中国商品查询：${data.reason||"未找到"}`;
+        }
+      }else{
+        chinaLookupNote=`中国商品查询 HTTP ${response.status}`;
+      }
+    }catch(err){
+      console.warn(err);
+      chinaLookupNote="中国商品查询暂时不可用";
+    }
+  }else{
+    chinaLookupNote="未配置中国商品查询 AppKey";
+  }
+
+  $("#barcodeStatus").textContent=`${chinaLookupNote}；正在尝试公共营养数据库…`;
 
   try{
     const fields=[
@@ -629,67 +674,80 @@ async function lookupBarcode(code){
       "nutriments","nutrition_data_per"
     ].join(",");
 
-    const url=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}?fields=${encodeURIComponent(fields)}`;
+    const url=
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}`+
+      `?fields=${encodeURIComponent(fields)}`;
+
     const response=await fetch(url,{headers:{"Accept":"application/json"}});
+    if(response.ok){
+      const data=await response.json();
 
-    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      if(data.status===1 && data.product){
+        const p=data.product;
+        const nu=p.nutriments||{};
 
-    const data=await response.json();
+        let kj100=n(nu["energy-kj_100g"]);
+        const kcal100=n(nu["energy-kcal_100g"]);
+        if(!kj100 && kcal100)kj100=round(kcalToKj(kcal100));
 
-    if(data.status!==1 || !data.product){
-      $("#barcodeStatus").textContent="公共数据库没有这个商品。请拍摄营养成分表，保存后下次扫这个条码就能直接读取。";
-      stopBarcodeScanner();
-      $("#barcodeDialog").close();
-
-      $("#foodForm").classList.remove("hide");
-      showProductMeta(code,"条码已记录 · 等待包装营养表");
-
-      setTimeout(()=>{
-        if(confirm("没有查到商品数据。现在从相册选择营养成分表吗？")){
-          $("#imageInput").click();
+        let sodiumMg100=0;
+        if(nu["sodium_100g"]!==undefined && nu["sodium_100g"]!==null){
+          sodiumMg100=round(n(nu["sodium_100g"])*1000);
+        }else if(nu["salt_100g"]!==undefined && nu["salt_100g"]!==null){
+          sodiumMg100=round(n(nu["salt_100g"])/2.5*1000);
         }
-      },150);
-      return;
+
+        const product={
+          barcode:code,
+          name:chinaProductName || p.product_name_zh || p.product_name || p.brands || `商品 ${code}`,
+          kj100:kj100||"",
+          protein100:nu["proteins_100g"] ?? "",
+          carbs100:nu["carbohydrates_100g"] ?? "",
+          fat100:nu["fat_100g"] ?? "",
+          fiber100:nu["fiber_100g"] ?? "",
+          sugar100:nu["sugars_100g"] ?? "",
+          sodiumMg100:sodiumMg100||""
+        };
+
+        const hasNutrition=
+          n(product.kj100)>0 ||
+          product.protein100!=="" ||
+          product.carbs100!=="" ||
+          product.fat100!=="";
+
+        if(hasNutrition){
+          stopBarcodeScanner();
+          $("#barcodeDialog").close();
+          setFoodFormFromProduct(
+            product,
+            chinaProductName ? "中国商品名称 + Open Food Facts 营养" : "Open Food Facts"
+          );
+          return;
+        }
+      }
     }
-
-    const p=data.product;
-    const nu=p.nutriments||{};
-
-    let kj100=n(nu["energy-kj_100g"]);
-    const kcal100=n(nu["energy-kcal_100g"]);
-
-    if(!kj100 && kcal100)kj100=round(kcalToKj(kcal100));
-
-    let sodiumMg100=0;
-    if(nu["sodium_100g"]!==undefined && nu["sodium_100g"]!==null){
-      sodiumMg100=round(n(nu["sodium_100g"])*1000);
-    }else if(nu["salt_100g"]!==undefined && nu["salt_100g"]!==null){
-      sodiumMg100=round(n(nu["salt_100g"])/2.5*1000);
-    }
-
-    const product={
-      barcode:code,
-      name:p.product_name_zh||p.product_name||p.brands||`商品 ${code}`,
-      kj100:kj100||"",
-      protein100:nu["proteins_100g"] ?? "",
-      carbs100:nu["carbohydrates_100g"] ?? "",
-      fat100:nu["fat_100g"] ?? "",
-      fiber100:nu["fiber_100g"] ?? "",
-      sugar100:nu["sugars_100g"] ?? "",
-      sodiumMg100:sodiumMg100||""
-    };
-
-    $("#barcodeStatus").textContent="已从 Open Food Facts 找到商品。请核对包装后保存。";
-    stopBarcodeScanner();
-    $("#barcodeDialog").close();
-    setFoodFormFromProduct(product,"Open Food Facts");
-
   }catch(err){
-    console.error(err);
-    $("#barcodeStatus").textContent=`查询失败：${err && err.message ? err.message : err}`;
+    console.warn(err);
   }
-}
 
+  stopBarcodeScanner();
+  $("#barcodeDialog").close();
+  $("#foodForm").classList.remove("hide");
+
+  if(chinaProductName){
+    $("#foodName").value=chinaProductName;
+    showProductMeta(code,"中国商品名称 · 营养待包装 OCR");
+  }else{
+    showProductMeta(code,"条码已记录 · 营养待包装 OCR");
+  }
+
+  setTimeout(()=>{
+    const message=chinaProductName
+      ? `已识别商品：${chinaProductName}\n\n没有可靠营养数据。现在从相册选择包装营养成分表吗？`
+      : "没有找到可靠商品营养数据。现在从相册选择包装营养成分表吗？";
+    if(confirm(message))$("#imageInput").click();
+  },150);
+}
 function stopBarcodeScanner(){
   if(barcodeScanner){
     try{
@@ -1073,6 +1131,8 @@ $("#settingsBtn").onclick=()=>{
   $("#goalFat").value=g.fat;
   $("#goalFiber").value=g.fiber;
   loadProfile();
+  const cfg=appConfig();
+  $("#juheAppKey").value=cfg.juheAppKey||"";
   $("#calcResult").classList.add("hide");
   $("#settingsDialog").showModal();
 };
@@ -1086,6 +1146,7 @@ $("#saveGoalsBtn").onclick=()=>{
     fiber:n($("#goalFiber").value)
   }));
   saveProfile();
+  saveAppConfig({...appConfig(),juheAppKey:$("#juheAppKey").value.trim()});
   $("#settingsDialog").close();
   render();
 };
