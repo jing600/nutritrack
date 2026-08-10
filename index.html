@@ -14,7 +14,7 @@
   <style>
     :root{
       --bg:#f7f7f8;--card:#fff;--text:#18181b;--muted:#71717a;
-      --line:#e4e4e7;--accent:#111827
+      --line:#e4e4e7;--accent:#111827;--soft:#f4f4f5
     }
     *{box-sizing:border-box}
     body{
@@ -27,6 +27,7 @@
     }
     h1,h2,h3,p{margin-top:0}
     .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+    .top-actions{display:flex;gap:8px}
     .date{font-size:13px;color:var(--muted)}
     .card{
       background:var(--card);border:1px solid var(--line);border-radius:22px;
@@ -34,17 +35,20 @@
     }
     .kcal{font-size:42px;font-weight:800;letter-spacing:-1.5px}
     .sub{font-size:14px;color:var(--muted)}
+    .tiny{font-size:12px;color:var(--muted)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .metric{padding:14px;border:1px solid var(--line);border-radius:16px}
     .metric b{display:block;font-size:19px;margin-top:4px}
     .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
     .food{padding:12px 0;border-bottom:1px solid var(--line)}
     .food:last-child{border-bottom:0}
+    .food-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:6px}
     button,.btn{
       appearance:none;border:0;border-radius:14px;padding:13px 16px;
       font-size:16px;font-weight:700;background:var(--accent);color:#fff;cursor:pointer
     }
     .secondary{background:#eceef1;color:#111827}
+    .danger{background:#fee2e2;color:#991b1b}
     .small{padding:9px 12px;font-size:14px}
     .fab{
       position:fixed;left:50%;transform:translateX(-50%);
@@ -76,13 +80,25 @@
       background:#f3f4f6;border:1px solid var(--line)
     }
     .energy-preview,.calc-box,.meal-preview{
-      margin-top:8px;padding:12px;border-radius:14px;background:#f4f4f5
+      margin-top:8px;padding:12px;border-radius:14px;background:var(--soft)
     }
     .calc-box strong{font-size:26px}
     .section-title{font-size:17px;margin:22px 0 8px}
     .note{
       margin-top:10px;padding:10px 12px;border-radius:12px;
       background:#fff7ed;color:#7c2d12;font-size:13px;line-height:1.45
+    }
+    .history-day{
+      width:100%;text-align:left;background:#fff;color:var(--text);
+      border:1px solid var(--line);padding:14px;border-radius:16px;margin:8px 0
+    }
+    .history-day .row{width:100%}
+    .history-kcal{font-size:18px;font-weight:800}
+    .history-detail-summary{
+      display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0
+    }
+    .history-detail-summary>div{
+      background:var(--soft);padding:12px;border-radius:14px
     }
   </style>
 </head>
@@ -95,7 +111,10 @@
       <h1 style="margin-bottom:4px">NutriTrack</h1>
       <div class="sub">个人每日营养记录</div>
     </div>
-    <button class="secondary small" id="settingsBtn">目标</button>
+    <div class="top-actions">
+      <button class="secondary small" id="historyBtn">历史</button>
+      <button class="secondary small" id="settingsBtn">目标</button>
+    </div>
   </div>
 
   <section class="card">
@@ -127,14 +146,15 @@
 
 <button class="fab" id="addBtn">＋ 添加食品</button>
 
+<!-- 添加 / 修改食品 -->
 <dialog id="addDialog">
   <div class="sheet">
     <div class="row">
-      <h2>添加食品</h2>
+      <h2 id="addDialogTitle">添加食品</h2>
       <button class="secondary small close">关闭</button>
     </div>
 
-    <div class="actions">
+    <div class="actions" id="addModeActions">
       <button id="scanLabelBtn">从相册识别营养成分表</button>
       <button class="secondary" id="manualBtn">手动添加</button>
     </div>
@@ -165,7 +185,6 @@
           <input id="kj" type="number" inputmode="decimal" placeholder="例如：1250">
           <div class="energy-preview">≈ <strong id="kcalPreview">0</strong> kcal</div>
         </div>
-
         <div class="field"><label>蛋白质 g</label><input id="protein" type="number" inputmode="decimal"></div>
         <div class="field"><label>碳水 g</label><input id="carbs" type="number" inputmode="decimal"></div>
         <div class="field"><label>脂肪 g</label><input id="fat" type="number" inputmode="decimal"></div>
@@ -194,6 +213,43 @@
   </div>
 </dialog>
 
+<!-- 历史列表 -->
+<dialog id="historyDialog">
+  <div class="sheet">
+    <div class="row">
+      <h2>历史记录</h2>
+      <button class="secondary small close">关闭</button>
+    </div>
+    <div class="sub">点击某一天查看详细记录。</div>
+    <div id="historyList" style="margin-top:12px"></div>
+  </div>
+</dialog>
+
+<!-- 历史详情 -->
+<dialog id="historyDetailDialog">
+  <div class="sheet">
+    <div class="row">
+      <div>
+        <div class="date" id="historyDetailDate"></div>
+        <h2 style="margin-bottom:0">当天详情</h2>
+      </div>
+      <button class="secondary small close">关闭</button>
+    </div>
+
+    <div class="history-detail-summary">
+      <div><span class="sub">热量</span><b id="historyDetailKcal">0 kcal</b></div>
+      <div><span class="sub">蛋白质</span><b id="historyDetailProtein">0 g</b></div>
+      <div><span class="sub">碳水</span><b id="historyDetailCarbs">0 g</b></div>
+      <div><span class="sub">脂肪</span><b id="historyDetailFat">0 g</b></div>
+      <div><span class="sub">膳食纤维</span><b id="historyDetailFiber">0 g</b></div>
+      <div><span class="sub">记录数</span><b id="historyDetailCount">0</b></div>
+    </div>
+
+    <div id="historyDetailList"></div>
+  </div>
+</dialog>
+
+<!-- 目标设置 -->
 <dialog id="settingsDialog">
   <div class="sheet">
     <div class="row">
@@ -206,12 +262,8 @@
     <div class="grid">
       <div class="field">
         <label>性别（用于公式）</label>
-        <select id="calcSex">
-          <option value="male">男</option>
-          <option value="female">女</option>
-        </select>
+        <select id="calcSex"><option value="male">男</option><option value="female">女</option></select>
       </div>
-
       <div class="field"><label>年龄</label><input id="calcAge" type="number" inputmode="numeric" placeholder="例如 30"></div>
       <div class="field"><label>身高 cm</label><input id="calcHeight" type="number" inputmode="decimal" placeholder="例如 175"></div>
       <div class="field"><label>体重 kg</label><input id="calcWeight" type="number" inputmode="decimal" placeholder="例如 70"></div>
@@ -242,16 +294,11 @@
     <div id="calcResult" class="calc-box hide">
       <div class="sub">基础代谢估算 BMR</div>
       <div><span id="bmrResult">0</span> kcal / 天</div>
-
       <div class="sub" style="margin-top:10px">维持热量估算 TDEE</div>
       <div><span id="tdeeResult">0</span> kcal / 天</div>
-
       <div class="sub" style="margin-top:10px">推荐每日目标</div>
       <strong><span id="recommendedResult">0</span> kcal</strong>
-
-      <div style="margin-top:12px">
-        <button id="useRecommendedBtn">使用这个目标</button>
-      </div>
+      <div style="margin-top:12px"><button id="useRecommendedBtn">使用这个目标</button></div>
     </div>
 
     <div class="note">
@@ -259,13 +306,11 @@
     </div>
 
     <h3 class="section-title">手动设置最终目标</h3>
-
     <div class="field"><label>热量 kcal</label><input id="goalKcal" type="number"></div>
     <div class="field"><label>蛋白质 g</label><input id="goalProtein" type="number"></div>
     <div class="field"><label>碳水 g</label><input id="goalCarbs" type="number"></div>
     <div class="field"><label>脂肪 g</label><input id="goalFat" type="number"></div>
     <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
-
     <button id="saveGoalsBtn">保存最终目标</button>
   </div>
 </dialog>
@@ -274,6 +319,10 @@
 
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const n=v=>Number(v)||0;
+const round=v=>Math.round((v+Number.EPSILON)*10)/10;
+const kjToKcal=kj=>kj/4.184;
+const kcalToKj=kcal=>kcal*4.184;
 
 const dateKey=()=>{
   const d=new Date();
@@ -281,37 +330,36 @@ const dateKey=()=>{
 };
 
 const defaultGoals={kcal:2000,protein:120,carbs:220,fat:65,fiber:30};
-
-const goals=()=>({
-  ...defaultGoals,
-  ...JSON.parse(localStorage.getItem("nutriGoals")||"{}")
-});
-
+const goals=()=>({...defaultGoals,...JSON.parse(localStorage.getItem("nutriGoals")||"{}")});
 const entries=()=>JSON.parse(localStorage.getItem("nutriEntries")||"{}");
 const saveEntries=v=>localStorage.setItem("nutriEntries",JSON.stringify(v));
-const n=v=>Number(v)||0;
-const round=v=>Math.round((v+Number.EPSILON)*10)/10;
-const kjToKcal=kj=>kj/4.184;
-const kcalToKj=kcal=>kcal*4.184;
+const todayEntries=()=>entries()[dateKey()]||[];
 
-function todayEntries(){
-  return entries()[dateKey()]||[];
+let editing=null; // {date,index}
+
+function totalsFor(list){
+  return list.reduce((a,x)=>({
+    kcal:a.kcal+n(x.kcal),
+    protein:a.protein+n(x.protein),
+    carbs:a.carbs+n(x.carbs),
+    fat:a.fat+n(x.fat),
+    fiber:a.fiber+n(x.fiber),
+    sugar:a.sugar+n(x.sugar),
+    sodium:a.sodium+n(x.sodium)
+  }),{kcal:0,protein:0,carbs:0,fat:0,fiber:0,sugar:0,sodium:0});
+}
+
+function formatDateKey(key){
+  const [y,m,d]=key.split("-").map(Number);
+  const dt=new Date(y,m-1,d);
+  return dt.toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric",weekday:"short"});
 }
 
 function render(){
   const d=new Date();
   $("#todayLabel").textContent=d.toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric",weekday:"long"});
 
-  const g=goals();
-  const list=todayEntries();
-
-  const t=list.reduce((a,x)=>({
-    kcal:a.kcal+n(x.kcal),
-    protein:a.protein+n(x.protein),
-    carbs:a.carbs+n(x.carbs),
-    fat:a.fat+n(x.fat),
-    fiber:a.fiber+n(x.fiber)
-  }),{kcal:0,protein:0,carbs:0,fat:0,fiber:0});
+  const g=goals(), list=todayEntries(), t=totalsFor(list);
 
   $("#kcalNow").textContent=round(t.kcal);
   $("#kjNow").textContent=round(kcalToKj(t.kcal));
@@ -324,11 +372,14 @@ function render(){
   $("#fatGoal").textContent=g.fat;
   $("#fiberNow").textContent=round(t.fiber);
   $("#fiberGoal").textContent=g.fiber;
-
   $("#kcalLeft").textContent=Math.max(0,round(g.kcal-t.kcal));
-  $("#kcalProgress").max=g.kcal;
+  $("#kcalProgress").max=g.kcal||1;
   $("#kcalProgress").value=t.kcal;
 
+  renderFoodList(list);
+}
+
+function renderFoodList(list){
   const box=$("#foodList");
   box.innerHTML="";
 
@@ -338,7 +389,7 @@ function render(){
   }
 
   const groups={};
-  list.forEach((x,i)=>(groups[x.meal]??=[]).push({...x,_i:i}));
+  list.forEach((x,i)=>(groups[x.meal||"未分类"]??=[]).push({...x,_i:i}));
 
   Object.entries(groups).forEach(([meal,items])=>{
     const h=document.createElement("div");
@@ -354,17 +405,22 @@ function render(){
         <div>
           <b>${x.name||"未命名食品"}</b>
           <div class="sub">P ${round(x.protein)}g · C ${round(x.carbs)}g · F ${round(x.fat)}g</div>
+          <div class="tiny">${x.basis==="serving"?`${round(x.amount)} 份`:`${round(x.amount)} g/ml`}</div>
         </div>
         <div style="text-align:right">
           <b>${round(x.kcal)} kcal</b>
           <div class="sub">${round(itemKj)} kJ</div>
-          <button class="secondary small" data-del="${x._i}">删除</button>
+          <div class="food-actions">
+            <button class="secondary small" data-edit="${x._i}">修改</button>
+            <button class="danger small" data-del="${x._i}">删除</button>
+          </div>
         </div>
       `;
       box.appendChild(r);
     });
   });
 
+  $$("[data-edit]").forEach(b=>b.onclick=()=>openEdit(dateKey(),+b.dataset.edit));
   $$("[data-del]").forEach(b=>b.onclick=()=>{
     const all=entries();
     all[dateKey()].splice(+b.dataset.del,1);
@@ -374,16 +430,57 @@ function render(){
 }
 
 function resetForm(){
+  editing=null;
+  $("#addDialogTitle").textContent="添加食品";
+  $("#saveFoodBtn").textContent="加入今日";
+  $("#addModeActions").classList.remove("hide");
   ["foodName","kj","protein","carbs","fat","fiber","sugar","sodium"].forEach(id=>$("#"+id).value="");
   $("#kcalPreview").textContent="0";
   $("#mealKcalPreview").textContent="0";
   $("#mealKjPreview").textContent="0";
   $("#amount").value="100";
   $("#basis").value="100";
+  $("#meal").value="早餐";
   $("#amountLabel").textContent="本次吃了多少 g / ml";
   $("#ocrArea").classList.add("hide");
   $("#foodForm").classList.add("hide");
   $("#imageInput").value="";
+}
+
+function openEdit(date,index){
+  const all=entries();
+  const item=(all[date]||[])[index];
+  if(!item)return;
+
+  resetForm();
+  editing={date,index};
+
+  $("#addDialogTitle").textContent="修改记录";
+  $("#saveFoodBtn").textContent="保存修改";
+  $("#addModeActions").classList.add("hide");
+  $("#foodForm").classList.remove("hide");
+
+  const factor=item.basis==="serving"?n(item.amount):(n(item.amount)/100);
+  const safeFactor=factor>0?factor:1;
+
+  const totalKj=item.kj?n(item.kj):kcalToKj(n(item.kcal));
+  const baseKj=totalKj/safeFactor;
+
+  $("#foodName").value=item.name||"";
+  $("#basis").value=item.basis||"100";
+  $("#amount").value=item.amount||((item.basis==="serving")?1:100);
+  $("#meal").value=item.meal||"早餐";
+  $("#kj").value=round(baseKj);
+  $("#protein").value=round(n(item.protein)/safeFactor);
+  $("#carbs").value=round(n(item.carbs)/safeFactor);
+  $("#fat").value=round(n(item.fat)/safeFactor);
+  $("#fiber").value=round(n(item.fiber)/safeFactor);
+  $("#sugar").value=round(n(item.sugar)/safeFactor);
+  $("#sodium").value=round(n(item.sodium)/safeFactor);
+  $("#amountLabel").textContent=$("#basis").value==="100"?"本次吃了多少 g / ml":"本次吃了多少份";
+
+  updateEnergyPreview();
+  $("#addDialog").showModal();
 }
 
 $("#addBtn").onclick=()=>{
@@ -393,20 +490,14 @@ $("#addBtn").onclick=()=>{
 
 $$(".close").forEach(b=>b.onclick=()=>b.closest("dialog").close());
 
-$("#manualBtn").onclick=()=>{
-  $("#foodForm").classList.remove("hide");
-};
-
+$("#manualBtn").onclick=()=>$("#foodForm").classList.remove("hide");
 $("#scanLabelBtn").onclick=()=>$("#imageInput").click();
 
 function updateEnergyPreview(){
-  const kj=n($("#kj").value);
-  const kcal=kjToKcal(kj);
-
+  const kj=n($("#kj").value), kcal=kjToKcal(kj);
   $("#kcalPreview").textContent=round(kcal);
 
-  const basis=$("#basis").value;
-  const amount=n($("#amount").value);
+  const basis=$("#basis").value, amount=n($("#amount").value);
   const factor=basis==="100"?amount/100:amount;
 
   $("#mealKjPreview").textContent=round(kj*factor);
@@ -442,7 +533,6 @@ $("#imageInput").onchange=async e=>{
         if(m.progress)$("#ocrStatus").textContent=`OCR ${Math.round(m.progress*100)}% · ${m.status}`;
       }
     });
-
     $("#ocrText").value=res.data.text;
     parseNutrition(res.data.text);
     $("#ocrStatus").textContent="识别完成，请核对数值后保存。";
@@ -507,38 +597,137 @@ $("#saveFoodBtn").onclick=()=>{
   const basis=$("#basis").value;
   const amount=n($("#amount").value);
   const factor=basis==="100"?amount/100:amount;
-
   if(factor<=0)return alert("请输入实际食用量。");
 
   const kjBase=n($("#kj").value);
   if(kjBase<=0)return alert("请输入食品能量 kJ。");
 
   const actualKj=kjBase*factor;
-  const actualKcal=kjToKcal(actualKj);
-
   const item={
     name:$("#foodName").value.trim()||"食品",
     meal:$("#meal").value,
     amount,
     basis,
     kj:round(actualKj),
-    kcal:round(actualKcal),
+    kcal:round(kjToKcal(actualKj)),
     protein:round(n($("#protein").value)*factor),
     carbs:round(n($("#carbs").value)*factor),
     fat:round(n($("#fat").value)*factor),
     fiber:round(n($("#fiber").value)*factor),
     sugar:round(n($("#sugar").value)*factor),
     sodium:round(n($("#sodium").value)*factor),
-    createdAt:Date.now()
+    createdAt:editing?((entries()[editing.date]||[])[editing.index]?.createdAt||Date.now()):Date.now(),
+    updatedAt:Date.now()
   };
 
   const all=entries();
-  (all[dateKey()]??=[]).push(item);
+
+  if(editing){
+    if(!all[editing.date]||!all[editing.date][editing.index]){
+      alert("找不到要修改的记录。");
+      return;
+    }
+    all[editing.date][editing.index]=item;
+  }else{
+    (all[dateKey()]??=[]).push(item);
+  }
+
   saveEntries(all);
   $("#addDialog").close();
+  editing=null;
   render();
 };
 
+/* 历史 */
+function renderHistory(){
+  const all=entries();
+  const box=$("#historyList");
+  box.innerHTML="";
+
+  const dates=Object.keys(all)
+    .filter(k=>Array.isArray(all[k])&&all[k].length)
+    .sort((a,b)=>b.localeCompare(a));
+
+  if(!dates.length){
+    box.innerHTML='<p class="sub">还没有历史记录。</p>';
+    return;
+  }
+
+  dates.forEach(key=>{
+    const list=all[key];
+    const t=totalsFor(list);
+    const btn=document.createElement("button");
+    btn.className="history-day";
+    btn.dataset.historyDate=key;
+    btn.innerHTML=`
+      <div class="row">
+        <div>
+          <b>${formatDateKey(key)}</b>
+          <div class="sub">${list.length} 条记录 · P ${round(t.protein)}g · C ${round(t.carbs)}g · F ${round(t.fat)}g</div>
+        </div>
+        <div style="text-align:right">
+          <div class="history-kcal">${round(t.kcal)} kcal</div>
+          <div class="tiny">${round(kcalToKj(t.kcal))} kJ</div>
+        </div>
+      </div>
+    `;
+    box.appendChild(btn);
+  });
+
+  $$("[data-history-date]").forEach(b=>b.onclick=()=>openHistoryDetail(b.dataset.historyDate));
+}
+
+function openHistoryDetail(key){
+  const all=entries(), list=all[key]||[], t=totalsFor(list);
+
+  $("#historyDetailDate").textContent=formatDateKey(key);
+  $("#historyDetailKcal").textContent=`${round(t.kcal)} kcal`;
+  $("#historyDetailProtein").textContent=`${round(t.protein)} g`;
+  $("#historyDetailCarbs").textContent=`${round(t.carbs)} g`;
+  $("#historyDetailFat").textContent=`${round(t.fat)} g`;
+  $("#historyDetailFiber").textContent=`${round(t.fiber)} g`;
+  $("#historyDetailCount").textContent=String(list.length);
+
+  const box=$("#historyDetailList");
+  box.innerHTML="";
+
+  const groups={};
+  list.forEach((x,i)=>(groups[x.meal||"未分类"]??=[]).push({...x,_i:i}));
+
+  Object.entries(groups).forEach(([meal,items])=>{
+    const h=document.createElement("h3");
+    h.style.margin="18px 0 4px";
+    h.textContent=meal;
+    box.appendChild(h);
+
+    items.forEach(x=>{
+      const row=document.createElement("div");
+      row.className="food row";
+      const itemKj=x.kj?n(x.kj):kcalToKj(n(x.kcal));
+      row.innerHTML=`
+        <div>
+          <b>${x.name||"未命名食品"}</b>
+          <div class="sub">P ${round(x.protein)}g · C ${round(x.carbs)}g · F ${round(x.fat)}g</div>
+          <div class="tiny">${x.basis==="serving"?`${round(x.amount)} 份`:`${round(x.amount)} g/ml`}</div>
+        </div>
+        <div style="text-align:right">
+          <b>${round(x.kcal)} kcal</b>
+          <div class="tiny">${round(itemKj)} kJ</div>
+        </div>
+      `;
+      box.appendChild(row);
+    });
+  });
+
+  $("#historyDetailDialog").showModal();
+}
+
+$("#historyBtn").onclick=()=>{
+  renderHistory();
+  $("#historyDialog").showModal();
+};
+
+/* 清空今日 */
 $("#clearTodayBtn").onclick=()=>{
   if(confirm("确定清空今天所有记录吗？")){
     const all=entries();
@@ -548,8 +737,7 @@ $("#clearTodayBtn").onclick=()=>{
   }
 };
 
-/* ---------- 自动热量目标 ---------- */
-
+/* 自动目标 */
 function saveProfile(){
   const profile={
     sex:$("#calcSex").value,
@@ -585,9 +773,7 @@ function calculateRecommendation(){
     return null;
   }
 
-  // Mifflin–St Jeor
   let bmr=10*weight+6.25*height-5*age+(sex==="male"?5:-161);
-
   const tdee=bmr*activity;
 
   let recommended=tdee;
@@ -602,9 +788,7 @@ function calculateRecommendation(){
   $("#tdeeResult").textContent=tdeeRounded;
   $("#recommendedResult").textContent=recommended;
   $("#calcResult").classList.remove("hide");
-
   saveProfile();
-
   return recommended;
 }
 
@@ -617,13 +801,11 @@ $("#useRecommendedBtn").onclick=()=>{
 
 $("#settingsBtn").onclick=()=>{
   const g=goals();
-
   $("#goalKcal").value=g.kcal;
   $("#goalProtein").value=g.protein;
   $("#goalCarbs").value=g.carbs;
   $("#goalFat").value=g.fat;
   $("#goalFiber").value=g.fiber;
-
   loadProfile();
   $("#calcResult").classList.add("hide");
   $("#settingsDialog").showModal();
@@ -637,7 +819,6 @@ $("#saveGoalsBtn").onclick=()=>{
     fat:n($("#goalFat").value),
     fiber:n($("#goalFiber").value)
   }));
-
   saveProfile();
   $("#settingsDialog").close();
   render();
