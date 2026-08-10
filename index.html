@@ -629,7 +629,7 @@ async function lookupBarcode(code){
       "nutriments","nutrition_data_per"
     ].join(",");
 
-    const url=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${encodeURIComponent(fields)}`;
+    const url=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}?fields=${encodeURIComponent(fields)}`;
     const response=await fetch(url,{headers:{"Accept":"application/json"}});
 
     if(!response.ok)throw new Error(`HTTP ${response.status}`);
@@ -686,7 +686,7 @@ async function lookupBarcode(code){
 
   }catch(err){
     console.error(err);
-    $("#barcodeStatus").textContent="查询失败。请检查网络，或直接拍摄营养成分表。";
+    $("#barcodeStatus").textContent=`查询失败：${err && err.message ? err.message : err}`;
   }
 }
 
