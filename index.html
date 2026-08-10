@@ -169,7 +169,7 @@
       </div>
 
       <div class="note">
-        <b>强化识别：</b>如果整张包装识别不好，点击“裁剪营养表”，然后在图片上拖动框选营养成分表。程序会自动放大、灰度化、增强对比度后再识别。
+        <b>推荐：</b>中国包装请优先点“裁剪营养表”，只框选营养成分表本身，并让表格尽量占满选框。新版会分别识别“数字/单位”和“中文项目名”，再合并结果。
       </div>
 
       <div class="actions">
@@ -1018,34 +1018,146 @@ function preprocessImage(source, selection=null){
 }
 
 async function recognizeCanvas(canvas,label){
-  $("#ocrStatus").textContent=`${label}：正在加载 OCR…`;
+  $("#ocrStatus").textContent=`${label}：第一遍识别数字和单位…`;
 
-  const res=await Tesseract.recognize(canvas,"eng+chi_sim",{
+  // Pass A: numeric-heavy OCR. This is intentionally English-only and
+  // restricted to characters commonly found in Chinese nutrition tables.
+  const numeric=await Tesseract.recognize(canvas,"eng",{
+    tessedit_char_whitelist:"0123456789.,%kKjJgGmMcalCALNRVrv/ ",
+    preserve_interword_spaces:"1",
     logger:m=>{
       if(m.progress){
         $("#ocrStatus").textContent=
-          `${label} · ${Math.round(m.progress*100)}% · ${m.status}`;
+          `${label} · 数值识别 ${Math.round(m.progress*100)}%`;
       }
     }
   });
 
-  const text=res.data.text||"";
-  $("#ocrText").value=text;
-  const parsed=parseNutrition(text);
+  $("#ocrStatus").textContent=`${label}：第二遍识别营养项目名称…`;
+
+  // Pass B: Chinese + English keywords.
+  const labels=await Tesseract.recognize(canvas,"eng+chi_sim",{
+    preserve_interword_spaces:"1",
+    logger:m=>{
+      if(m.progress){
+        $("#ocrStatus").textContent=
+          `${label} · 文字识别 ${Math.round(m.progress*100)}%`;
+      }
+    }
+  });
+
+  const numericText=(numeric.data.text||"").trim();
+  const labelText=(labels.data.text||"").trim();
+
+  const merged =
+`【数字/单位识别】
+${numericText}
+
+【中文/项目名识别】
+${labelText}`;
+
+  $("#ocrText").value=merged;
+
+  let parsed=parseNutrition(labelText);
+
+  // If the ordinary parser did not find enough, try table-number recovery.
+  const foundBefore=[
+    parsed.kj,parsed.protein,parsed.carbs,parsed.fat,parsed.fiber,parsed.sodium
+  ].filter(v=>Number(v)>0).length;
+
+  if(foundBefore<3){
+    const recovered=recoverNutritionNumbers(numericText,labelText);
+    parsed={...parsed,...recovered};
+
+    for(const [k,v] of Object.entries(recovered)){
+      if(v!=="" && v!==null && v!==undefined && Number(v)>0){
+        $("#"+k).value=v;
+      }
+    }
+    updateEnergyPreview();
+  }
 
   const found=[
-    parsed.kj,
-    parsed.protein,
-    parsed.carbs,
-    parsed.fat,
-    parsed.fiber,
-    parsed.sodium
-  ].filter(v=>v!=="" && v!==null && v!==undefined && Number(v)!==0).length;
+    $("#kj").value,$("#protein").value,$("#carbs").value,
+    $("#fat").value,$("#fiber").value,$("#sodium").value
+  ].filter(v=>Number(v)>0).length;
 
   $("#ocrStatus").textContent=
-    found>=3
-      ? `识别完成，已找到 ${found} 项营养数值。请核对后保存。`
-      : "识别完成，但有效数值较少。建议点击“裁剪营养表”只框选表格后再识别。";
+    found>=4
+      ? `识别完成，已找到 ${found} 项主要营养数据。请逐项核对。`
+      : "识别完成，但数值仍不足。建议只框选白色营养表区域，并尽量让表格占满画面。";
+}
+
+function recoverNutritionNumbers(numericText,labelText){
+  const text=cleanOcrText(numericText);
+
+  // Collect plausible nutrition values with their units.
+  const kjMatches=[...text.matchAll(/(\d{2,5}(?:\.\d+)?)\s*k\s*j/ig)]
+    .map(m=>Number(m[1]))
+    .filter(v=>v>=20 && v<=10000);
+
+  const mgMatches=[...text.matchAll(/(\d{1,5}(?:\.\d+)?)\s*m\s*g/ig)]
+    .map(m=>Number(m[1]))
+    .filter(v=>v>0 && v<=50000);
+
+  const gMatches=[...text.matchAll(/(\d{1,3}(?:\.\d+)?)\s*g/ig)]
+    .map(m=>Number(m[1]))
+    .filter(v=>v>0 && v<=100);
+
+  const result={};
+
+  if(kjMatches.length)result.kj=kjMatches[0];
+  if(mgMatches.length)result.sodium=mgMatches[0];
+
+  // Detect an arbitrary "per X g" basis from either OCR pass.
+  const combined=cleanOcrText(`${labelText}\n${numericText}`);
+  const base=combined.match(/(?:每|per\s*)(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)/i);
+
+  let baseAmount=100;
+  if(base){
+    baseAmount=Number(base[1]);
+  }else{
+    // On Chinese nutrition tables the header often contains a repeated
+    // amount such as "30g". Prefer a common small serving size.
+    const servingCandidates=gMatches.filter(v=>v>=5 && v<=80);
+    if(servingCandidates.length){
+      const counts={};
+      for(const v of servingCandidates)counts[v]=(counts[v]||0)+1;
+      const best=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+      if(best && Number(best[1])>=2)baseAmount=Number(best[0]);
+    }
+  }
+
+  // Remove likely header serving-size values and then assign the first
+  // four gram values in the standard Chinese table order:
+  // protein, fat, carbohydrate, dietary fiber.
+  let grams=gMatches.slice();
+
+  if(baseAmount!==100){
+    grams=grams.filter(v=>Math.abs(v-baseAmount)>0.01);
+  }
+
+  // Also discard common NRV percentages accidentally read as grams.
+  grams=grams.filter(v=>v<80);
+
+  if(grams.length>=1)result.protein=grams[0];
+  if(grams.length>=2)result.fat=grams[1];
+  if(grams.length>=3)result.carbs=grams[2];
+  if(grams.length>=4)result.fiber=grams[3];
+
+  // Normalize per-Xg labels to per100g.
+  if(baseAmount && baseAmount>0 && baseAmount!==100){
+    const scale=100/baseAmount;
+    for(const k of ["kj","protein","fat","carbs","fiber","sodium"]){
+      if(result[k])result[k]=round(result[k]*scale);
+    }
+
+    $("#basis").value="100";
+    $("#amount").value=String(baseAmount);
+    $("#amountLabel").textContent=`本次吃了多少 g（标签原始基准：每 ${baseAmount}g）`;
+  }
+
+  return result;
 }
 
 $("#imageInput").onchange=async e=>{
