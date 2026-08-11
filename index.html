@@ -109,10 +109,11 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
-      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V16</div>
+      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V17</div>
       <div class="sub">个人每日营养记录</div>
     </div>
-    <div class="top-actions">
+    <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
+      <button class="secondary small" id="updateBtn">更新</button>
       <button class="secondary small" id="historyBtn">历史</button>
       <button class="secondary small" id="settingsBtn">目标</button>
     </div>
@@ -170,7 +171,7 @@
       </div>
 
       <div class="note">
-        <b>v16 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v17 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -378,6 +379,17 @@
     <div class="field"><label>脂肪 g</label><input id="goalFat" type="number"></div>
     <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
     <button id="saveGoalsBtn">保存最终目标</button>
+
+    <h3 class="section-title">数据备份</h3>
+    <div class="note">
+      饮食历史、本地商品库和目标设置主要保存在当前浏览器 / 主屏幕 App 的本地存储中。
+      更新 App 不会删除这些数据，但删除主屏幕入口或清理网站数据可能导致丢失。
+    </div>
+    <div class="actions">
+      <button class="secondary" id="exportDataBtn">导出备份</button>
+      <button class="secondary" id="importDataBtn">导入备份</button>
+    </div>
+    <input id="importDataInput" class="hide" type="file" accept="application/json,.json">
   </div>
 </dialog>
 
@@ -2586,7 +2598,142 @@ if("serviceWorker" in navigator){
 }
 
 render();
+
+async function forceAppUpdate(){
+  const btn=$("#updateBtn");
+  const original=btn.textContent;
+
+  btn.disabled=true;
+  btn.textContent="更新中…";
+
+  try{
+    // Ask every registered worker for an immediate update.
+    if("serviceWorker" in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+
+      for(const reg of regs){
+        try{
+          await reg.update();
+        }catch(err){
+          console.warn("Service worker update failed:",err);
+        }
+      }
+    }
+
+    // Delete only Cache Storage. Do NOT touch localStorage, because it stores
+    // NutriTrack history, goals and the local product database.
+    if("caches" in window){
+      const names=await caches.keys();
+      await Promise.all(names.map(name=>caches.delete(name)));
+    }
+
+    // Add a cache-busting query so iOS standalone mode requests fresh HTML.
+    const url=new URL(location.href);
+    url.searchParams.set("appv","17");
+    url.searchParams.set("_refresh",String(Date.now()));
+
+    location.replace(url.toString());
+
+  }catch(err){
+    console.error(err);
+    btn.disabled=false;
+    btn.textContent=original;
+    alert("更新失败，请检查网络后再试。不会影响你的历史记录。");
+  }
+}
+
+$("#updateBtn").onclick=()=>{
+  const ok=confirm(
+    "检查并拉取最新版 NutriTrack？\n\n" +
+    "只会清理网页缓存，不会删除饮食历史、目标设置或本地商品库。"
+  );
+
+  if(ok)forceAppUpdate();
+};
+
+function buildBackupObject(){
+  return {
+    app:"NutriTrack",
+    backupVersion:1,
+    exportedAt:new Date().toISOString(),
+    data:{
+      nutriEntries:JSON.parse(localStorage.getItem("nutriEntries")||"{}"),
+      nutriGoals:JSON.parse(localStorage.getItem("nutriGoals")||"{}"),
+      nutriProfile:JSON.parse(localStorage.getItem("nutriProfile")||"{}"),
+      nutriProducts:JSON.parse(localStorage.getItem("nutriProducts")||"{}"),
+      nutriConfig:JSON.parse(localStorage.getItem("nutriConfig")||"{}")
+    }
+  };
+}
+
+$("#exportDataBtn").onclick=()=>{
+  const backup=buildBackupObject();
+  const blob=new Blob(
+    [JSON.stringify(backup,null,2)],
+    {type:"application/json;charset=utf-8"}
+  );
+
+  const a=document.createElement("a");
+  const url=URL.createObjectURL(blob);
+
+  a.href=url;
+  a.download=`NutriTrack-backup-${dateKey()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+$("#importDataBtn").onclick=()=>{
+  $("#importDataInput").value="";
+  $("#importDataInput").click();
+};
+
+$("#importDataInput").onchange=async e=>{
+  const file=e.target.files?.[0];
+  if(!file)return;
+
+  try{
+    const text=await file.text();
+    const backup=JSON.parse(text);
+    const data=backup?.data;
+
+    if(!data || typeof data!=="object"){
+      throw new Error("不是有效的 NutriTrack 备份文件");
+    }
+
+    const ok=confirm(
+      "导入后会覆盖当前设备上的 NutriTrack 本地数据。\n\n" +
+      "确定继续吗？"
+    );
+
+    if(!ok)return;
+
+    const keys=[
+      "nutriEntries",
+      "nutriGoals",
+      "nutriProfile",
+      "nutriProducts",
+      "nutriConfig"
+    ];
+
+    for(const key of keys){
+      if(data[key]!==undefined){
+        localStorage.setItem(key,JSON.stringify(data[key]));
+      }
+    }
+
+    alert("数据恢复完成。");
+    location.reload();
+
+  }catch(err){
+    console.error(err);
+    alert(`导入失败：${err?.message||err}`);
+  }
+};
+
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V16 · 原始营养基准</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V17 · 可更新 + 数据备份</div>
 </body>
 </html>
