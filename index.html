@@ -110,12 +110,13 @@
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-        <div style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V21</div>
+        <div style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V22</div>
         <div id="cloudUserBadge" class="tiny">仅本地</div>
       </div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
+      <button class="secondary small" id="cloudLoginBtn">登录</button>
       <button class="secondary small" id="updateBtn">更新</button>
       <button class="secondary small" id="historyBtn">历史</button>
       <button class="secondary small" id="settingsBtn">目标</button>
@@ -385,7 +386,7 @@
     <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
     <button id="saveGoalsBtn">保存最终目标</button>
 
-    <h3 class="section-title">D1 云同步</h3>
+    <h3 class="section-title" id="cloudSyncSection">D1 云同步</h3>
 
     <div class="note">
       手机本地仍然保存一份数据；登录云用户后，每次新增、修改或删除记录会自动备份到 Cloudflare D1。
@@ -2925,6 +2926,9 @@ function updateCloudUi(message=""){
 
   if(active){
     $("#cloudCurrentName").textContent=active.displayName||"云用户";
+    if($("#cloudLoginBtn")){
+      $("#cloudLoginBtn").textContent=active.displayName||"用户";
+    }
     $("#cloudCurrentCode").textContent=displaySyncCode(active.syncCode);
     $("#cloudCodeRow").classList.remove("hide");
     $("#cloudUserBadge").textContent=`云：${active.displayName||"用户"}`;
@@ -2937,6 +2941,9 @@ function updateCloudUi(message=""){
       message || `最近同步：${t}`;
   }else{
     $("#cloudCurrentName").textContent="未启用";
+    if($("#cloudLoginBtn")){
+      $("#cloudLoginBtn").textContent="登录";
+    }
     $("#cloudCurrentStatus").textContent=
       message || "数据目前只保存在本机";
     $("#cloudCodeRow").classList.add("hide");
@@ -3236,6 +3243,41 @@ $("#copyCloudCodeBtn").onclick=async()=>{
   }
 };
 
+
+$("#cloudLoginBtn").onclick=()=>{
+  const dlg=$("#settingsDialog");
+
+  if(!dlg.open){
+    const g=goals();
+    $("#goalKcal").value=g.kcal;
+    $("#goalProtein").value=g.protein;
+    $("#goalCarbs").value=g.carbs;
+    $("#goalFat").value=g.fat;
+    $("#goalFiber").value=g.fiber;
+    loadProfile();
+    $("#calcResult").classList.add("hide");
+    dlg.showModal();
+  }
+
+  // iOS dialog scrolling can be flaky immediately after showModal.
+  setTimeout(()=>{
+    const section=$("#cloudSyncSection");
+    if(section){
+      section.scrollIntoView({
+        behavior:"smooth",
+        block:"start"
+      });
+    }
+
+    const active=activeCloudProfile();
+    if(!active){
+      setTimeout(()=>{
+        $("#cloudNewName")?.focus();
+      },350);
+    }
+  },120);
+};
+
 updateCloudUi();
 
 function buildBackupObject(){
@@ -3322,6 +3364,6 @@ $("#importDataInput").onchange=async e=>{
 };
 
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V21 · D1 云同步</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V22 · 云用户登录入口</div>
 </body>
 </html>
