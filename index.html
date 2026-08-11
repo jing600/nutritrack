@@ -1761,7 +1761,12 @@ function parseTencentNutrition(rawText,positionalText=""){
   const combined=`${raw}\n${pos}`;
 
   const basis=getCloudBasis(combined);
-  const all=extractAllCloudNumbers(raw);
+
+  // 腾讯云经常把“能 量 / 蛋 白质 / 脂 肪”拆成多段。
+  // 对云端结果先生成一个“去空白紧凑版”，再按完整营养项目精确匹配。
+  const compact=raw
+    .replace(/\s+/g,"")
+    .replace(/[|｜]/g,"");
 
   const values={
     kj:0,
@@ -1773,72 +1778,112 @@ function parseTencentNutrition(rawText,positionalText=""){
     sodium:0
   };
 
-  // Energy and sodium have distinctive units, so they are safe to read directly.
-  if(all.kj.length){
-    const energyNrv=bestNrvMatch(all.kj,all.percents,"kj","kj");
-    values.kj=energyNrv ? energyNrv.value : all.kj[0].value;
+  function compactNum(pattern){
+    const m=compact.match(pattern);
+    return m ? Number(m[1]) : 0;
   }
 
-  if(all.mg.length){
-    const sodiumNrv=bestNrvMatch(all.mg,all.percents,"sodium","mg");
-    values.sodium=sodiumNrv ? sodiumNrv.value : all.mg[0].value;
-  }
+  // 这些项目在腾讯云原始结果里已经识别准确，
+  // 只是经常被换行拆开。去空白以后即可精确对应。
+  values.kj=compactNum(/能量(\d{2,5}(?:\.\d+)?)kJ/i);
 
-  // Strong explicit labels first.
-  values.carbs =
-    firstNumberAfterFlexibleKeyword(raw,"碳\\s*水\\s*化\\s*合\\s*物|碳水|carbohydrates?","g",45);
+  values.protein=compactNum(
+    /蛋白质(\d{1,3}(?:\.\d+)?)g/i
+  );
 
-  values.fiber =
-    firstNumberAfterFlexibleKeyword(raw,"膳\\s*食\\s*纤\\s*维|dietary\\s*fib(?:er|re)|fib(?:er|re)","g",45);
+  values.carbs=compactNum(
+    /碳水化合物(\d{1,3}(?:\.\d+)?)g/i
+  );
 
-  values.protein =
-    firstNumberAfterFlexibleKeyword(raw,"蛋\\s*白\\s*质|protein","g",45);
+  values.fiber=compactNum(
+    /膳食纤维(\d{1,3}(?:\.\d+)?)g/i
+  );
 
-  values.fat =
-    firstNumberAfterFlexibleKeyword(raw,"脂\\s*肪|fat","g",45);
+  values.sodium=compactNum(
+    /钠(\d{1,5}(?:\.\d+)?)mg/i
+  );
 
-  // IMPORTANT: do not infer sugar from generic "糖" because packaging text
-  // contains phrases like 无添加蔗糖 and 以100g产品计.
-  // Only accept a clearly labelled nutrition-row sugar value.
-  values.sugar =
-    firstNumberAfterFlexibleKeyword(
-      raw,
-      "(?:糖\\s*$|总\\s*糖|糖\\s*类|sugars?)",
-      "g",
-      30
-    );
+  // 糖必须有明确的“总糖/糖类/Sugars”营养行才填写。
+  // “无添加蔗糖”“以100g产品计”等文字绝不能参与糖值解析。
+  values.sugar=
+    compactNum(/总糖(\d{1,3}(?:\.\d+)?)g/i) ||
+    compactNum(/糖类(\d{1,3}(?:\.\d+)?)g/i) ||
+    compactNum(/sugars?(\d{1,3}(?:\.\d+)?)g/i);
 
-  // Remove serving-size values (e.g. 每30g) and trans-fat 0g from gram candidates.
-  const gramCandidates=all.grams.filter(x=>{
-    if(Math.abs(x.value-basis.amount)<0.001){
-      const near=raw.slice(Math.max(0,x.index-8),x.index+8);
-      if(/每|per/i.test(near))return false;
-    }
-    return x.value>0;
-  });
+  const all=extractAllCloudNumbers(raw);
 
-  // Use NRV cross-checking when a label was split or reordered by OCR.
-  const usedValues=new Set(
-    ["protein","fat","carbs","fiber"]
-      .map(k=>values[k])
+  // 对脂肪做特殊处理：
+  // 腾讯云这张标签把“脂 2.6g 4% 肪”拆开，因此完整“脂肪2.6g”
+  // 可能不存在。先尝试正常形式，再从剩余克数中用 NRV 匹配。
+  values.fat=
+    compactNum(/脂肪(\d{1,3}(?:\.\d+)?)g/i);
+
+  const knownGramValues=new Set(
+    [
+      values.protein,
+      values.carbs,
+      values.fiber,
+      values.sugar
+    ]
       .filter(v=>v>0)
       .map(v=>String(v))
   );
 
-  const remaining=gramCandidates.filter(c=>!usedValues.has(String(c.value)));
+  const gramCandidates=all.grams.filter(x=>{
+    // 排除“每30g”等营养基准。
+    if(Math.abs(x.value-basis.amount)<0.001){
+      const nearby=raw.slice(Math.max(0,x.index-12),x.index+10);
+      if(/每|per/i.test(nearby))return false;
+    }
 
-  for(const nutrient of ["protein","carbs","fat","fiber"]){
-    if(values[nutrient]>0)continue;
+    // 排除已明确对应的营养值和反式脂肪 0g。
+    if(x.value<=0)return false;
+    if(knownGramValues.has(String(x.value)))return false;
 
-    const match=bestNrvMatch(remaining,all.percents,nutrient);
-    if(match){
-      values[nutrient]=match.value;
-      const removeAt=remaining.findIndex(x=>x.value===match.value);
-      if(removeAt>=0)remaining.splice(removeAt,1);
+    return true;
+  });
+
+  if(!values.fat){
+    // 中国标签脂肪 NRV = 60g。4% 对应约2.4g，
+    // 包装四舍五入后 2.6g 是合理匹配。
+    const fatMatch=bestNrvMatch(
+      gramCandidates,
+      all.percents,
+      "fat"
+    );
+
+    if(fatMatch){
+      values.fat=fatMatch.value;
     }
   }
 
-  // Final sanity checks in the label's original basis.
+  // 如果蛋白质因极端拆行仍未精确抓到，也用 NRV 做兜底。
+  if(!values.protein){
+    const proteinCandidates=gramCandidates.filter(
+      x=>x.value!==values.fat
+    );
+
+    const proteinMatch=bestNrvMatch(
+      proteinCandidates,
+      all.percents,
+      "protein"
+    );
+
+    if(proteinMatch){
+      values.protein=proteinMatch.value;
+    }
+  }
+
+  // 能量/钠的单位非常明确，精确关键词失败时可以安全取首个对应单位值。
+  if(!values.kj && all.kj.length){
+    values.kj=all.kj[0].value;
+  }
+
+  if(!values.sodium && all.mg.length){
+    values.sodium=all.mg[0].value;
+  }
+
+  // 最后只做合理范围拦截，不再“猜”缺失值。
   const limits={
     kj:10000,
     protein:100,
@@ -1857,7 +1902,6 @@ function parseTencentNutrition(rawText,positionalText=""){
 
   return {values,basis};
 }
-
 function applyTencentNutrition(parsed){
   const raw={...parsed.values};
   const basis=parsed.basis||{amount:100,unit:"g"};
@@ -1918,7 +1962,7 @@ function fillFromTencentResult(data){
 
   $("#ocrStatus").textContent=
     found>=5
-      ? `腾讯云识别完成，已通过营养项目 + NRV 交叉校验解析 ${found} 项主要数据。请核对后保存。`
+      ? `腾讯云识别完成，已按完整营养项目精确匹配，并用 NRV 补全被拆开的项目，共解析 ${found} 项主要数据。请核对后保存。`
       : `腾讯云识别完成，目前可靠解析到 ${found} 项。缺失项不会乱填，请手动补充。`;
 
   return vals;
@@ -2454,6 +2498,6 @@ if("serviceWorker" in navigator){
 
 render();
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v14 · Tencent OCR + NRV Smart Parser</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v15 · Tencent OCR Exact Parser</div>
 </body>
 </html>
