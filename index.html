@@ -109,7 +109,7 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
-      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V19</div>
+      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V20</div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
@@ -173,7 +173,7 @@
       </div>
 
       <div class="note">
-        <b>v19 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v20 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -614,7 +614,11 @@ $$(".close").forEach(b=>b.onclick=()=>{
 });
 
 $("#manualBtn").onclick=()=>$("#foodForm").classList.remove("hide");
-$("#scanLabelBtn").onclick=()=>{  $("#imageInput").value="";  $("#imageInput").click();};
+$("#scanLabelBtn").onclick=()=>{
+  const input=$("#imageInput");
+  input.value="";
+  input.click();
+};
 
 function normalizeBarcode(value){
   return String(value||"").replace(/\D/g,"");
@@ -881,17 +885,16 @@ function startBarcodeScanner(){
   );
 }
 
-$("#barcodeBtn").onclick=()=>{
-  $("#barcodeDialog").showModal();
-  setTimeout(startBarcodeScanner,100);
-};
+if($("#closeBarcodeBtn")){
+  $("#closeBarcodeBtn").onclick=()=>{
+    stopBarcodeScanner();
+    $("#barcodeDialog").close();
+  };
+}
 
-$("#closeBarcodeBtn").onclick=()=>{
-  stopBarcodeScanner();
-  $("#barcodeDialog").close();
-};
-
-$("#lookupBarcodeBtn").onclick=()=>lookupBarcode($("#manualBarcode").value);
+if($("#lookupBarcodeBtn")){
+  $("#lookupBarcodeBtn").onclick=()=>lookupBarcode($("#manualBarcode").value);
+}
 
 function getNutritionFactor(){
   const basis=$("#basis").value;
@@ -2133,24 +2136,27 @@ async function cloudRecognizeCanvas(canvas,label="腾讯云高精度识别"){
   }
 }
 
-$("#imageInput").onchange=async e=>{
+const imageInput=$("#imageInput");
+
+async function handleNutritionPhotoSelected(e){
   const file=e.target.files?.[0];
   if(!file)return;
 
-  // Immediately reveal OCR UI after photo selection.
   $("#ocrArea").classList.remove("hide");
   $("#foodForm").classList.remove("hide");
 
   const previewUrl=URL.createObjectURL(file);
   $("#preview").src=previewUrl;
-
   $("#ocrStatus").textContent="图片已选择，正在准备腾讯云高精度识别…";
 
   try{
     ocrImageBitmap=await loadImageBitmapFromFile(file);
     cropSelection=null;
 
-    // Scroll OCR status into view so iPhone users can see recognition progress.
+    // Wait one frame so iOS has time to render the OCR section
+    // after dismissing the native photo picker.
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+
     $("#ocrArea").scrollIntoView({
       behavior:"smooth",
       block:"start"
@@ -2165,7 +2171,10 @@ $("#imageInput").onchange=async e=>{
     $("#ocrStatus").textContent=
       `自动识别失败：${err?.message||err}。可以点击“腾讯云高精度识别”重试，或裁剪营养表后识别。`;
   }
-};
+}
+
+imageInput.addEventListener("change",handleNutritionPhotoSelected);
+
 $("#cloudOcrBtn").onclick=async()=>{
   if(!ocrImageBitmap)return alert("请先选择营养成分表图片。");
 
@@ -2798,6 +2807,6 @@ $("#importDataInput").onchange=async e=>{
 };
 
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V19 · 自动更新修复</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V20 · 相册与更新修复</div>
 </body>
 </html>
