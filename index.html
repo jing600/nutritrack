@@ -109,6 +109,7 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
+      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V16</div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions">
@@ -169,7 +170,7 @@
       </div>
 
       <div class="note">
-        <b>v13 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v16 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -205,8 +206,21 @@
         <label>营养基准</label>
         <select id="basis">
           <option value="100">每 100g / 100ml</option>
+          <option value="custom">按标签每 X g / ml</option>
           <option value="serving">每份</option>
         </select>
+      </div>
+
+      <div id="basisAmountWrap" class="field hide">
+        <label>标签原始基准</label>
+        <div class="grid">
+          <input id="basisAmount" type="number" inputmode="decimal" value="30" placeholder="例如：30">
+          <select id="basisUnit">
+            <option value="g">g</option>
+            <option value="ml">ml</option>
+          </select>
+        </div>
+        <div class="sub">例如包装写“每30g”，这里就是 30 g；识别成功后会自动填写。</div>
       </div>
 
       <div class="grid">
@@ -500,6 +514,9 @@ function resetForm(){
   $("#mealKjPreview").textContent="0";
   $("#amount").value="100";
   $("#basis").value="100";
+  $("#basisAmount").value="30";
+  $("#basisUnit").value="g";
+  $("#basisAmountWrap").classList.add("hide");
   $("#meal").value="早餐";
   $("#amountLabel").textContent="本次吃了多少 g / ml";
   $("#ocrArea").classList.add("hide");
@@ -525,7 +542,17 @@ function openEdit(date,index){
   $("#addModeActions").classList.add("hide");
   $("#foodForm").classList.remove("hide");
 
-  const factor=item.basis==="serving"?n(item.amount):(n(item.amount)/100);
+  let factor=1;
+
+  if(item.basis==="serving"){
+    factor=n(item.amount);
+  }else if(item.basis==="custom"){
+    const base=n(item.basisAmount)||100;
+    factor=base>0 ? n(item.amount)/base : 1;
+  }else{
+    factor=n(item.amount)/100;
+  }
+
   const safeFactor=factor>0?factor:1;
 
   const totalKj=item.kj?n(item.kj):kcalToKj(n(item.kcal));
@@ -533,6 +560,15 @@ function openEdit(date,index){
 
   $("#foodName").value=item.name||"";
   $("#basis").value=item.basis||"100";
+
+  if(item.basis==="custom"){
+    $("#basisAmount").value=item.basisAmount||30;
+    $("#basisUnit").value=item.basisUnit||"g";
+    $("#basisAmountWrap").classList.remove("hide");
+  }else{
+    $("#basisAmountWrap").classList.add("hide");
+  }
+
   $("#amount").value=item.amount||((item.basis==="serving")?1:100);
   $("#meal").value=item.meal||"早餐";
   $("#kj").value=round(baseKj);
@@ -542,7 +578,7 @@ function openEdit(date,index){
   $("#fiber").value=round(n(item.fiber)/safeFactor);
   $("#sugar").value=round(n(item.sugar)/safeFactor);
   $("#sodium").value=round(n(item.sodium)/safeFactor);
-  $("#amountLabel").textContent=$("#basis").value==="100"?"本次吃了多少 g / ml":"本次吃了多少份";
+  updateAmountLabel();
 
   if(item.barcode){
     showProductMeta(item.barcode,item.source||"历史记录");
@@ -583,8 +619,9 @@ function setFoodFormFromProduct(product,source){
 
   $("#foodName").value=product.name||"";
   $("#basis").value="100";
+  $("#basisAmountWrap").classList.add("hide");
   $("#amount").value="100";
-  $("#amountLabel").textContent="本次吃了多少 g / ml";
+  updateAmountLabel();
 
   $("#kj").value=product.kj100 ?? "";
   $("#protein").value=product.protein100 ?? "";
@@ -601,7 +638,12 @@ function setFoodFormFromProduct(product,source){
 function saveCurrentProductTemplate(item){
   if(!currentBarcode)return;
 
-  const factor=item.basis==="100" ? n(item.amount)/100 : n(item.amount);
+  // Product DB is normalized to per100g/ml.
+  // For gram/ml based entries, actual nutrient totals correspond to item.amount.
+  // Serving-based entries do not have a known gram weight, so skip template normalization.
+  if(item.basis==="serving")return;
+
+  const factor=n(item.amount)/100;
   if(factor<=0)return;
 
   const db=productDb();
@@ -837,12 +879,51 @@ $("#closeBarcodeBtn").onclick=()=>{
 
 $("#lookupBarcodeBtn").onclick=()=>lookupBarcode($("#manualBarcode").value);
 
+function getNutritionFactor(){
+  const basis=$("#basis").value;
+  const amount=n($("#amount").value);
+
+  if(basis==="100"){
+    return amount/100;
+  }
+
+  if(basis==="custom"){
+    const base=n($("#basisAmount").value);
+    return base>0 ? amount/base : 0;
+  }
+
+  return amount;
+}
+
+function updateAmountLabel(){
+  const basis=$("#basis").value;
+
+  if(basis==="100"){
+    $("#basisAmountWrap").classList.add("hide");
+    $("#amountLabel").textContent="本次吃了多少 g / ml";
+    return;
+  }
+
+  if(basis==="custom"){
+    $("#basisAmountWrap").classList.remove("hide");
+
+    const base=n($("#basisAmount").value)||30;
+    const unit=$("#basisUnit").value||"g";
+
+    $("#amountLabel").textContent=
+      `本次吃了多少 ${unit}（标签营养基准：每 ${base}${unit}）`;
+    return;
+  }
+
+  $("#basisAmountWrap").classList.add("hide");
+  $("#amountLabel").textContent="本次吃了多少份";
+}
+
 function updateEnergyPreview(){
   const kj=n($("#kj").value), kcal=kjToKcal(kj);
   $("#kcalPreview").textContent=round(kcal);
 
-  const basis=$("#basis").value, amount=n($("#amount").value);
-  const factor=basis==="100"?amount/100:amount;
+  const factor=getNutritionFactor();
 
   $("#mealKjPreview").textContent=round(kj*factor);
   $("#mealKcalPreview").textContent=round(kcal*factor);
@@ -850,18 +931,29 @@ function updateEnergyPreview(){
 
 $("#kj").addEventListener("input",updateEnergyPreview);
 $("#amount").addEventListener("input",updateEnergyPreview);
+$("#basisAmount").addEventListener("input",()=>{
+  updateAmountLabel();
+  updateEnergyPreview();
+});
+$("#basisUnit").addEventListener("change",updateAmountLabel);
 
 $("#basis").onchange=()=>{
-  if($("#basis").value==="100"){
-    $("#amountLabel").textContent="本次吃了多少 g / ml";
+  const basis=$("#basis").value;
+
+  if(basis==="100"){
     if($("#amount").value==="1")$("#amount").value="100";
+  }else if(basis==="custom"){
+    const base=n($("#basisAmount").value)||30;
+    $("#amount").value=String(base);
   }else{
-    $("#amountLabel").textContent="本次吃了多少份";
-    if($("#amount").value==="100")$("#amount").value="1";
+    if($("#amount").value==="100" || $("#amount").value==="30"){
+      $("#amount").value="1";
+    }
   }
+
+  updateAmountLabel();
   updateEnergyPreview();
 };
-
 
 let ocrImageBitmap=null;
 let cropSelection=null;
@@ -1903,37 +1995,33 @@ function parseTencentNutrition(rawText,positionalText=""){
   return {values,basis};
 }
 function applyTencentNutrition(parsed){
-  const raw={...parsed.values};
+  const vals={...parsed.values};
   const basis=parsed.basis||{amount:100,unit:"g"};
 
-  let vals={...raw};
-
+  // V16: preserve the nutrition standard exactly as printed on the package.
+  // Example: "每30g" stays 439kJ / 6.0g / 2.6g / 13.1g...
+  // We no longer silently convert the displayed fields to per100g.
   if(basis.amount && basis.amount>0 && basis.amount!==100){
-    const scale=100/basis.amount;
-
-    for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
-      if(vals[k])vals[k]=round(vals[k]*scale);
-    }
-
-    $("#basis").value="100";
+    $("#basis").value="custom";
+    $("#basisAmount").value=String(basis.amount);
+    $("#basisUnit").value=basis.unit||"g";
+    $("#basisAmountWrap").classList.remove("hide");
     $("#amount").value=String(basis.amount);
-    $("#amountLabel").textContent=
-      `本次吃了多少 ${basis.unit}（标签原始基准：每 ${basis.amount}${basis.unit}）`;
   }else{
     $("#basis").value="100";
+    $("#basisAmountWrap").classList.add("hide");
     $("#amount").value="100";
-    $("#amountLabel").textContent="本次吃了多少 g / ml";
   }
 
   for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
     $("#"+k).value=vals[k] ? vals[k] : "";
   }
 
+  updateAmountLabel();
   updateEnergyPreview();
 
   return vals;
 }
-
 function fillFromTencentResult(data){
   const positionalText=rebuildRowsFromTencent(data.detections||[]);
   const rawText=String(data.text||"").trim();
@@ -2208,29 +2296,27 @@ function parseNutrition(text){
     sodium:firstPlausibleAfterKeyword(s,[/钠/i,/sodium/i],"m\\s*g")
   };
 
-  // 如果标签是每 X g / ml，统一转换成每100g / 100ml
+  // V16: 保留包装原始营养基准，不再强制换算成每100g。
   if(baseAmount && baseAmount>0 && baseAmount!==100){
-    const scale=100/baseAmount;
-
-    for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
-      if(vals[k])vals[k]=round(vals[k]*scale);
-    }
-
-    $("#basis").value="100";
+    $("#basis").value="custom";
+    $("#basisAmount").value=String(baseAmount);
+    $("#basisUnit").value=baseUnit;
+    $("#basisAmountWrap").classList.remove("hide");
     $("#amount").value=String(baseAmount);
-    $("#amountLabel").textContent=`本次吃了多少 ${baseUnit}（标签原始基准：每 ${baseAmount}${baseUnit}）`;
 
     $("#ocrStatus").textContent=
-      `识别到标签基准：每 ${baseAmount}${baseUnit}。已自动换算为每100${baseUnit}数据。`;
+      `识别到标签营养基准：每 ${baseAmount}${baseUnit}。已按包装原始数值填写。`;
   }else if(baseAmount===100){
     $("#basis").value="100";
+    $("#basisAmountWrap").classList.add("hide");
     $("#amount").value="100";
-    $("#amountLabel").textContent="本次吃了多少 g / ml";
   }else{
     $("#basis").value="serving";
+    $("#basisAmountWrap").classList.add("hide");
     $("#amount").value="1";
-    $("#amountLabel").textContent="本次吃了多少份";
   }
+
+  updateAmountLabel();
 
   Object.entries(vals).forEach(([k,v])=>{
     $("#"+k).value=v||"";
@@ -2260,8 +2346,9 @@ $("#parseBtn").onclick=()=>{
 $("#saveFoodBtn").onclick=()=>{
   const basis=$("#basis").value;
   const amount=n($("#amount").value);
-  const factor=basis==="100"?amount/100:amount;
-  if(factor<=0)return alert("请输入实际食用量。");
+  const factor=getNutritionFactor();
+
+  if(factor<=0)return alert("请输入有效的营养基准和实际食用量。");
 
   const kjBase=n($("#kj").value);
   if(kjBase<=0)return alert("请输入食品能量 kJ。");
@@ -2272,6 +2359,8 @@ $("#saveFoodBtn").onclick=()=>{
     meal:$("#meal").value,
     amount,
     basis,
+    basisAmount:basis==="custom"?n($("#basisAmount").value):null,
+    basisUnit:basis==="custom"?($("#basisUnit").value||"g"):null,
     kj:round(actualKj),
     kcal:round(kjToKcal(actualKj)),
     protein:round(n($("#protein").value)*factor),
@@ -2498,6 +2587,6 @@ if("serviceWorker" in navigator){
 
 render();
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v15 · Tencent OCR Exact Parser</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V16 · 原始营养基准</div>
 </body>
 </html>
