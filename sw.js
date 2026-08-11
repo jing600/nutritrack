@@ -1,4 +1,4 @@
-const CACHE_NAME = "nutritrack-v17";
+const CACHE_NAME = "nutritrack-v18";
 
 const APP_FILES = [
   "./",

@@ -109,7 +109,7 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
-      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V17</div>
+      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V18</div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
@@ -157,7 +157,6 @@
     </div>
 
     <div class="actions" id="addModeActions">
-      <button id="barcodeBtn">扫描商品条形码</button>
       <button id="scanLabelBtn">从相册识别营养成分表</button>
       <button class="secondary" id="manualBtn">手动添加</button>
     </div>
@@ -171,7 +170,7 @@
       </div>
 
       <div class="note">
-        <b>v17 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v18 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -1289,12 +1288,12 @@ function applyPlausibilityGuards(values){
 
 function extractNutritionByRows(text){
   const out={
-    kj:parseRowWithNrv(text,"kj",[/能量/i,/energy/i],"k\\s*j"),
-    protein:parseRowWithNrv(text,"protein",[/蛋白质/i,/protein/i],"g"),
-    fat:parseRowWithNrv(text,"fat",[/脂肪/i,/fat/i],"g"),
-    carbs:parseRowWithNrv(text,"carbs",[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"g"),
-    fiber:parseRowWithNrv(text,"fiber",[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"g"),
-    sodium:parseRowWithNrv(text,"sodium",[/钠/i,/sodium/i],"m\\s*g")
+    kj:parseRowWithNrv(text,"kj",[/能量/i,/energy/i],"(?:k\\s*j|千\\s*焦)"),
+    protein:parseRowWithNrv(text,"protein",[/蛋白质/i,/protein/i],"(?:g|克)"),
+    fat:parseRowWithNrv(text,"fat",[/脂肪/i,/fat/i],"(?:g|克)"),
+    carbs:parseRowWithNrv(text,"carbs",[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"(?:g|克)"),
+    fiber:parseRowWithNrv(text,"fiber",[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"(?:g|克)"),
+    sodium:parseRowWithNrv(text,"sodium",[/钠/i,/sodium/i],"(?:m\\s*g|毫\\s*克)")
   };
 
   return applyPlausibilityGuards(out);
@@ -1866,8 +1865,8 @@ function parseTencentNutrition(rawText,positionalText=""){
 
   const basis=getCloudBasis(combined);
 
-  // 腾讯云经常把“能 量 / 蛋 白质 / 脂 肪”拆成多段。
-  // 对云端结果先生成一个“去空白紧凑版”，再按完整营养项目精确匹配。
+  // 腾讯云有时输出英文单位，有时直接输出中文单位。
+  // 统一去空白后匹配：kJ/千焦、g/克、mg/毫克、ml/毫升。
   const compact=raw
     .replace(/\s+/g,"")
     .replace(/[|｜]/g,"");
@@ -1887,98 +1886,114 @@ function parseTencentNutrition(rawText,positionalText=""){
     return m ? Number(m[1]) : 0;
   }
 
-  // 这些项目在腾讯云原始结果里已经识别准确，
-  // 只是经常被换行拆开。去空白以后即可精确对应。
-  values.kj=compactNum(/能量(\d{2,5}(?:\.\d+)?)kJ/i);
+  const energyPattern=/能量(\d{1,5}(?:\.\d+)?)(?:kJ|千焦)/i;
+  const proteinPattern=/蛋白质(\d{1,3}(?:\.\d+)?)(?:g|克)/i;
+  const fatPattern=/脂肪(\d{1,3}(?:\.\d+)?)(?:g|克)/i;
+  const carbsPattern=/碳水化合物(\d{1,3}(?:\.\d+)?)(?:g|克)/i;
+  const fiberPattern=/膳食纤维(\d{1,3}(?:\.\d+)?)(?:g|克)/i;
+  const sodiumPattern=/钠(\d{1,5}(?:\.\d+)?)(?:mg|毫克)/i;
 
-  values.protein=compactNum(
-    /蛋白质(\d{1,3}(?:\.\d+)?)g/i
-  );
+  values.kj=compactNum(energyPattern);
+  values.protein=compactNum(proteinPattern);
+  values.fat=compactNum(fatPattern);
+  values.carbs=compactNum(carbsPattern);
+  values.fiber=compactNum(fiberPattern);
+  values.sodium=compactNum(sodiumPattern);
 
-  values.carbs=compactNum(
-    /碳水化合物(\d{1,3}(?:\.\d+)?)g/i
-  );
-
-  values.fiber=compactNum(
-    /膳食纤维(\d{1,3}(?:\.\d+)?)g/i
-  );
-
-  values.sodium=compactNum(
-    /钠(\d{1,5}(?:\.\d+)?)mg/i
-  );
-
-  // 糖必须有明确的“总糖/糖类/Sugars”营养行才填写。
-  // “无添加蔗糖”“以100g产品计”等文字绝不能参与糖值解析。
+  // 糖必须存在明确的营养项目才填写。
   values.sugar=
-    compactNum(/总糖(\d{1,3}(?:\.\d+)?)g/i) ||
-    compactNum(/糖类(\d{1,3}(?:\.\d+)?)g/i) ||
-    compactNum(/sugars?(\d{1,3}(?:\.\d+)?)g/i);
+    compactNum(/总糖(\d{1,3}(?:\.\d+)?)(?:g|克)/i) ||
+    compactNum(/糖类(\d{1,3}(?:\.\d+)?)(?:g|克)/i) ||
+    compactNum(/sugars?(\d{1,3}(?:\.\d+)?)(?:g|克)/i);
 
-  const all=extractAllCloudNumbers(raw);
+  // 从原始文本收集数值，用于腾讯云把关键词拆开的兜底情况。
+  const all={
+    kj:[
+      ...[...raw.matchAll(/(\d{1,5}(?:\.\d+)?)\s*k\s*j/ig)],
+      ...[...raw.matchAll(/(\d{1,5}(?:\.\d+)?)\s*千\s*焦/g)]
+    ].map(m=>({value:Number(m[1]),index:m.index})),
 
-  // 对脂肪做特殊处理：
-  // 腾讯云这张标签把“脂 2.6g 4% 肪”拆开，因此完整“脂肪2.6g”
-  // 可能不存在。先尝试正常形式，再从剩余克数中用 NRV 匹配。
-  values.fat=
-    compactNum(/脂肪(\d{1,3}(?:\.\d+)?)g/i);
+    mg:[
+      ...[...raw.matchAll(/(\d{1,5}(?:\.\d+)?)\s*m\s*g/ig)],
+      ...[...raw.matchAll(/(\d{1,5}(?:\.\d+)?)\s*毫\s*克/g)]
+    ].map(m=>({value:Number(m[1]),index:m.index})),
 
-  const knownGramValues=new Set(
-    [
-      values.protein,
-      values.carbs,
-      values.fiber,
-      values.sugar
+    grams:[
+      ...[...raw.matchAll(/(\d{1,3}(?:\.\d+)?)\s*g/ig)],
+      ...[...raw.matchAll(/(\d{1,3}(?:\.\d+)?)\s*克/g)]
     ]
+      .map(m=>({value:Number(m[1]),index:m.index}))
+      .filter(x=>x.value>0 && x.value<=100),
+
+    percents:[...raw.matchAll(/(\d{1,3}(?:\.\d+)?)\s*%/g)]
+      .map(m=>({value:Number(m[1]),index:m.index}))
+      .filter(x=>x.value>0 && x.value<=100)
+  };
+
+  // 已明确识别的克数不要参与后续猜测。
+  const knownGramValues=new Set(
+    [values.protein,values.fat,values.carbs,values.fiber,values.sugar]
       .filter(v=>v>0)
       .map(v=>String(v))
   );
 
   const gramCandidates=all.grams.filter(x=>{
-    // 排除“每30g”等营养基准。
+    // 排除营养基准，例如 每30克 / 每100克。
     if(Math.abs(x.value-basis.amount)<0.001){
       const nearby=raw.slice(Math.max(0,x.index-12),x.index+10);
       if(/每|per/i.test(nearby))return false;
     }
 
-    // 排除已明确对应的营养值和反式脂肪 0g。
     if(x.value<=0)return false;
     if(knownGramValues.has(String(x.value)))return false;
-
     return true;
   });
 
+  // 被拆开的脂肪/蛋白质继续用 NRV 兜底。
   if(!values.fat){
-    // 中国标签脂肪 NRV = 60g。4% 对应约2.4g，
-    // 包装四舍五入后 2.6g 是合理匹配。
-    const fatMatch=bestNrvMatch(
-      gramCandidates,
-      all.percents,
-      "fat"
-    );
-
-    if(fatMatch){
-      values.fat=fatMatch.value;
-    }
+    const fatMatch=bestNrvMatch(gramCandidates,all.percents,"fat");
+    if(fatMatch)values.fat=fatMatch.value;
   }
 
-  // 如果蛋白质因极端拆行仍未精确抓到，也用 NRV 做兜底。
   if(!values.protein){
     const proteinCandidates=gramCandidates.filter(
       x=>x.value!==values.fat
     );
-
     const proteinMatch=bestNrvMatch(
       proteinCandidates,
       all.percents,
       "protein"
     );
-
-    if(proteinMatch){
-      values.protein=proteinMatch.value;
-    }
+    if(proteinMatch)values.protein=proteinMatch.value;
   }
 
-  // 能量/钠的单位非常明确，精确关键词失败时可以安全取首个对应单位值。
+  if(!values.carbs){
+    const carbCandidates=gramCandidates.filter(
+      x=>x.value!==values.fat && x.value!==values.protein
+    );
+    const carbMatch=bestNrvMatch(
+      carbCandidates,
+      all.percents,
+      "carbs"
+    );
+    if(carbMatch)values.carbs=carbMatch.value;
+  }
+
+  if(!values.fiber){
+    const fiberCandidates=gramCandidates.filter(
+      x=>x.value!==values.fat &&
+         x.value!==values.protein &&
+         x.value!==values.carbs
+    );
+    const fiberMatch=bestNrvMatch(
+      fiberCandidates,
+      all.percents,
+      "fiber"
+    );
+    if(fiberMatch)values.fiber=fiberMatch.value;
+  }
+
+  // 单位足够明确时，安全兜底。
   if(!values.kj && all.kj.length){
     values.kj=all.kj[0].value;
   }
@@ -1987,7 +2002,6 @@ function parseTencentNutrition(rawText,positionalText=""){
     values.sodium=all.mg[0].value;
   }
 
-  // 最后只做合理范围拦截，不再“猜”缺失值。
   const limits={
     kj:10000,
     protein:100,
@@ -1995,7 +2009,7 @@ function parseTencentNutrition(rawText,positionalText=""){
     carbs:100,
     fiber:50,
     sugar:100,
-    sodium:5000
+    sodium:10000
   };
 
   for(const [k,max] of Object.entries(limits)){
@@ -2286,7 +2300,7 @@ function parseNutrition(text){
   let kj=firstPlausibleAfterKeyword(
     s,
     [/能量/i,/energy/i],
-    "k\\s*j"
+    "(?:k\\s*j|千\\s*焦)"
   );
 
   if(!kj){
@@ -2300,12 +2314,12 @@ function parseNutrition(text){
 
   const vals={
     kj:kj||0,
-    protein:firstPlausibleAfterKeyword(s,[/蛋白质/i,/protein/i],"g"),
-    fat:firstPlausibleAfterKeyword(s,[/脂肪/i,/fat/i],"g"),
-    carbs:firstPlausibleAfterKeyword(s,[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"g"),
-    fiber:firstPlausibleAfterKeyword(s,[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"g"),
-    sugar:firstPlausibleAfterKeyword(s,[/糖/i,/sugars?/i],"g"),
-    sodium:firstPlausibleAfterKeyword(s,[/钠/i,/sodium/i],"m\\s*g")
+    protein:firstPlausibleAfterKeyword(s,[/蛋白质/i,/protein/i],"(?:g|克)"),
+    fat:firstPlausibleAfterKeyword(s,[/脂肪/i,/fat/i],"(?:g|克)"),
+    carbs:firstPlausibleAfterKeyword(s,[/碳水化合物/i,/碳水/i,/carbohydrates?/i],"(?:g|克)"),
+    fiber:firstPlausibleAfterKeyword(s,[/膳食纤维/i,/纤维/i,/dietary\\s*fib(?:er|re)/i,/fib(?:er|re)/i],"(?:g|克)"),
+    sugar:firstPlausibleAfterKeyword(s,[/糖/i,/sugars?/i],"(?:g|克)"),
+    sodium:firstPlausibleAfterKeyword(s,[/钠/i,/sodium/i],"(?:m\\s*g|毫\\s*克)")
   };
 
   // V16: 保留包装原始营养基准，不再强制换算成每100g。
@@ -2629,7 +2643,7 @@ async function forceAppUpdate(){
 
     // Add a cache-busting query so iOS standalone mode requests fresh HTML.
     const url=new URL(location.href);
-    url.searchParams.set("appv","17");
+    url.searchParams.set("appv","18");
     url.searchParams.set("_refresh",String(Date.now()));
 
     location.replace(url.toString());
@@ -2734,6 +2748,6 @@ $("#importDataInput").onchange=async e=>{
 };
 
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V17 · 可更新 + 数据备份</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V18 · 中文单位兼容</div>
 </body>
 </html>
