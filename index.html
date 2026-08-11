@@ -169,21 +169,21 @@
       </div>
 
       <div class="note">
-        <b>推荐：</b>中国包装请优先点“裁剪营养表”，只框选营养成分表本身，并让表格尽量占满选框。新版会分别识别“数字/单位”和“中文项目名”，再合并结果。
+        <b>v13 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
-        <button class="secondary" id="autoEnhanceBtn">整图强化识别</button>
+        <button id="cloudOcrBtn">腾讯云高精度识别</button>
         <button class="secondary" id="cropOcrBtn">裁剪营养表</button>
-        <button class="secondary" id="splitOcrBtn">双栏营养表识别</button>
+        <button class="secondary" id="autoEnhanceBtn">本地 OCR 备用</button>
       </div>
 
       <div id="cropArea" class="hide">
         <div class="sub" style="margin:8px 0">在图片上拖动框选营养成分表：</div>
         <canvas id="cropCanvas" style="width:100%;max-height:55vh;border:1px solid #ddd;border-radius:12px;touch-action:none"></canvas>
         <div class="actions" style="margin-top:8px">
-          <button id="recognizeCropBtn">普通识别选中区域</button>
-          <button id="recognizeSplitCropBtn">按左右双栏识别</button>
+          <button id="recognizeCropCloudBtn">腾讯云识别选中区域</button>
+          <button class="secondary" id="recognizeCropBtn">本地 OCR 备用</button>
           <button class="secondary" id="cancelCropBtn">取消裁剪</button>
         </div>
       </div>
@@ -1528,6 +1528,205 @@ function recoverNutritionNumbers(numericText,labelText){
   return result;
 }
 
+
+const CLOUD_OCR_URL="https://nutritrack-ocr.18810921920.workers.dev/";
+
+function canvasToBase64Jpeg(canvas,quality=.88){
+  return canvas.toDataURL("image/jpeg",quality).split(",")[1];
+}
+
+function prepareCloudCanvas(source,selection=null){
+  const srcW=source.width;
+  const srcH=source.height;
+
+  let sx=0,sy=0,sw=srcW,sh=srcH;
+
+  if(selection){
+    const display=$("#cropCanvas");
+    const scaleX=srcW/display.width;
+    const scaleY=srcH/display.height;
+
+    sx=Math.max(0,Math.round(selection.x*scaleX));
+    sy=Math.max(0,Math.round(selection.y*scaleY));
+    sw=Math.max(1,Math.round(selection.w*scaleX));
+    sh=Math.max(1,Math.round(selection.h*scaleY));
+  }
+
+  // Tencent OCR does not need aggressive thresholding.
+  // Keep the original colors and resize only to reduce upload size.
+  const maxSide=2200;
+  const scale=Math.min(1,maxSide/Math.max(sw,sh));
+
+  const c=document.createElement("canvas");
+  c.width=Math.max(1,Math.round(sw*scale));
+  c.height=Math.max(1,Math.round(sh*scale));
+
+  const ctx=c.getContext("2d");
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality="high";
+  ctx.drawImage(source,sx,sy,sw,sh,0,0,c.width,c.height);
+
+  return c;
+}
+
+function detectionBox(item){
+  const points=Array.isArray(item?.Polygon)?item.Polygon:[];
+
+  if(points.length){
+    const xs=points.map(p=>Number(p.X)||0);
+    const ys=points.map(p=>Number(p.Y)||0);
+
+    const minX=Math.min(...xs);
+    const maxX=Math.max(...xs);
+    const minY=Math.min(...ys);
+    const maxY=Math.max(...ys);
+
+    return {
+      x:minX,
+      y:minY,
+      w:Math.max(1,maxX-minX),
+      h:Math.max(1,maxY-minY),
+      cx:(minX+maxX)/2,
+      cy:(minY+maxY)/2
+    };
+  }
+
+  // Some Tencent responses include ItemPolygon instead.
+  const p=item?.ItemPolygon;
+  if(p){
+    const x=Number(p.X)||0;
+    const y=Number(p.Y)||0;
+    const w=Number(p.Width)||1;
+    const h=Number(p.Height)||1;
+    return {x,y,w,h,cx:x+w/2,cy:y+h/2};
+  }
+
+  return {x:0,y:0,w:1,h:20,cx:0,cy:0};
+}
+
+function rebuildRowsFromTencent(detections){
+  const items=(detections||[])
+    .map(d=>({
+      text:String(d.DetectedText||"").trim(),
+      confidence:Number(d.Confidence)||0,
+      box:detectionBox(d)
+    }))
+    .filter(x=>x.text);
+
+  if(!items.length)return "";
+
+  items.sort((a,b)=>a.box.cy-b.box.cy || a.box.x-b.box.x);
+
+  const medianHeight=(()=>{
+    const hs=items.map(x=>x.box.h).sort((a,b)=>a-b);
+    return hs[Math.floor(hs.length/2)]||20;
+  })();
+
+  // Allow cells from the same printed row to be grouped even if baselines vary.
+  const tolerance=Math.max(10,medianHeight*.72);
+  const rows=[];
+
+  for(const item of items){
+    let row=rows.find(r=>Math.abs(r.cy-item.box.cy)<=tolerance);
+
+    if(!row){
+      row={cy:item.box.cy,items:[]};
+      rows.push(row);
+    }
+
+    row.items.push(item);
+    row.cy=row.items.reduce((s,x)=>s+x.box.cy,0)/row.items.length;
+  }
+
+  rows.sort((a,b)=>a.cy-b.cy);
+
+  return rows.map(row=>{
+    row.items.sort((a,b)=>a.box.x-b.box.x);
+    return row.items.map(x=>x.text).join(" ");
+  }).join("\n");
+}
+
+function fillFromTencentResult(data){
+  const positionalText=rebuildRowsFromTencent(data.detections||[]);
+  const rawText=String(data.text||"").trim();
+
+  const combined=positionalText
+    ? `【按位置重建表格】\n${positionalText}\n\n【腾讯云原始文字】\n${rawText}`
+    : rawText;
+
+  $("#ocrText").value=combined;
+
+  // Position-rebuilt rows are much more useful for nutrition-table parsing.
+  const parsed=parseNutrition(positionalText||rawText);
+
+  const found=[
+    parsed.kj,
+    parsed.protein,
+    parsed.carbs,
+    parsed.fat,
+    parsed.fiber,
+    parsed.sodium
+  ].filter(v=>Number(v)>0).length;
+
+  currentProductSource="腾讯云高精度 OCR";
+
+  $("#ocrStatus").textContent=
+    found>=5
+      ? `腾讯云识别完成，已解析 ${found} 项主要营养数据。请核对后保存。`
+      : `腾讯云识别完成，目前解析到 ${found} 项。请查看原始文本并补充缺失值。`;
+
+  return parsed;
+}
+
+async function cloudRecognizeCanvas(canvas,label="腾讯云高精度识别"){
+  $("#ocrStatus").textContent=`${label}：正在压缩并上传图片…`;
+
+  const imageBase64=canvasToBase64Jpeg(canvas,.88);
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),30000);
+
+  try{
+    $("#ocrStatus").textContent=`${label}：腾讯云正在识别…`;
+
+    const response=await fetch(CLOUD_OCR_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({imageBase64}),
+      signal:controller.signal
+    });
+
+    const data=await response.json().catch(()=>({}));
+
+    if(!response.ok || !data.ok){
+      const message=
+        data?.error?.message ||
+        data?.error?.code ||
+        data?.error ||
+        `HTTP ${response.status}`;
+
+      throw new Error(String(message));
+    }
+
+    return fillFromTencentResult(data);
+
+  }catch(err){
+    console.error(err);
+
+    const message=err?.name==="AbortError"
+      ? "请求超时，请检查网络后重试。"
+      : `云端识别失败：${err?.message||err}`;
+
+    $("#ocrStatus").textContent=
+      `${message} 可以点击“本地 OCR 备用”，或直接手动填写。`;
+
+    throw err;
+
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 $("#imageInput").onchange=async e=>{
   const file=e.target.files[0];
   if(!file)return;
@@ -1537,18 +1736,36 @@ $("#imageInput").onchange=async e=>{
 
   const url=URL.createObjectURL(file);
   $("#preview").src=url;
-  $("#ocrStatus").textContent="图片已载入，正在准备强化识别…";
+  $("#ocrStatus").textContent="图片已载入，正在准备腾讯云高精度识别…";
 
   try{
     ocrImageBitmap=await loadImageBitmapFromFile(file);
     cropSelection=null;
-    const enhanced=preprocessImage(ocrImageBitmap);
-    await recognizeCanvas(enhanced,"整图强化识别");
+
+    const canvas=prepareCloudCanvas(ocrImageBitmap);
+    await cloudRecognizeCanvas(canvas,"腾讯云整图识别");
   }catch(err){
     console.error(err);
-    $("#ocrStatus").textContent=
-      "整图识别失败。请点击“裁剪营养表”，只框选营养成分表后重试。";
+
+    if(!ocrImageBitmap){
+      $("#ocrStatus").textContent="图片读取失败，请重新选择照片。";
+    }
   }
+};
+
+$("#cloudOcrBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return alert("请先选择营养成分表图片。");
+
+  try{
+    const canvas=cropSelection
+      ? prepareCloudCanvas(ocrImageBitmap,cropSelection)
+      : prepareCloudCanvas(ocrImageBitmap);
+
+    await cloudRecognizeCanvas(
+      canvas,
+      cropSelection ? "腾讯云裁剪区域识别" : "腾讯云整图识别"
+    );
+  }catch(_){}
 };
 
 $("#autoEnhanceBtn").onclick=async()=>{
@@ -1556,10 +1773,10 @@ $("#autoEnhanceBtn").onclick=async()=>{
 
   try{
     const enhanced=preprocessImage(ocrImageBitmap);
-    await recognizeCanvas(enhanced,"整图强化识别");
+    await recognizeCanvas(enhanced,"本地 OCR 备用识别");
   }catch(err){
     console.error(err);
-    $("#ocrStatus").textContent="强化识别失败，请尝试裁剪营养表。";
+    $("#ocrStatus").textContent="本地 OCR 失败，请手动填写或稍后重试。";
   }
 };
 
@@ -1571,27 +1788,25 @@ $("#cropOcrBtn").onclick=()=>{
   $("#cropArea").scrollIntoView({behavior:"smooth",block:"nearest"});
 };
 
-$("#splitOcrBtn").onclick=async()=>{
-  if(!ocrImageBitmap)return alert("请先选择图片。");
-
-  try{
-    // If user already has a crop selection, use it; otherwise process
-    // the currently loaded image. Cropping first is still recommended.
-    const source=cropSelection
-      ? preprocessImage(ocrImageBitmap,cropSelection)
-      : preprocessImage(ocrImageBitmap);
-
-    await recognizeTwoColumnTable(source);
-  }catch(err){
-    console.error(err);
-    $("#ocrStatus").textContent=
-      "双栏识别失败。建议先点“裁剪营养表”，只框选白色营养表，再点“双栏营养表识别”。";
-  }
-};
 
 $("#cancelCropBtn").onclick=()=>{
   $("#cropArea").classList.add("hide");
   cropSelection=null;
+};
+
+
+$("#recognizeCropCloudBtn").onclick=async()=>{
+  if(!ocrImageBitmap)return;
+
+  if(!cropSelection || cropSelection.w<30 || cropSelection.h<30){
+    return alert("请先在图片上拖动框选营养成分表。");
+  }
+
+  try{
+    const canvas=prepareCloudCanvas(ocrImageBitmap,cropSelection);
+    $("#cropArea").classList.add("hide");
+    await cloudRecognizeCanvas(canvas,"腾讯云裁剪区域识别");
+  }catch(_){}
 };
 
 $("#recognizeCropBtn").onclick=async()=>{
@@ -1611,23 +1826,6 @@ $("#recognizeCropBtn").onclick=async()=>{
   }
 };
 
-$("#recognizeSplitCropBtn").onclick=async()=>{
-  if(!ocrImageBitmap)return;
-
-  if(!cropSelection || cropSelection.w<30 || cropSelection.h<30){
-    return alert("请先在图片上拖动框选营养成分表。");
-  }
-
-  try{
-    const enhanced=preprocessImage(ocrImageBitmap,cropSelection);
-    $("#cropArea").classList.add("hide");
-    await recognizeTwoColumnTable(enhanced,"裁剪双栏识别");
-  }catch(err){
-    console.error(err);
-    $("#ocrStatus").textContent=
-      "裁剪双栏识别失败。可以直接在下面营养数值输入框补充缺失项。";
-  }
-};
 
 (()=>{
   const c=$("#cropCanvas");
@@ -1996,5 +2194,6 @@ if("serviceWorker" in navigator){
 
 render();
 </script>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v13 · Tencent Cloud OCR</div>
 </body>
 </html>
