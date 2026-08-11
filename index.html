@@ -109,7 +109,10 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
-      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V20</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+        <div style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V21</div>
+        <div id="cloudUserBadge" class="tiny">仅本地</div>
+      </div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
@@ -173,7 +176,7 @@
       </div>
 
       <div class="note">
-        <b>v20 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v21 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -382,6 +385,49 @@
     <div class="field"><label>膳食纤维 g</label><input id="goalFiber" type="number"></div>
     <button id="saveGoalsBtn">保存最终目标</button>
 
+    <h3 class="section-title">D1 云同步</h3>
+
+    <div class="note">
+      手机本地仍然保存一份数据；登录云用户后，每次新增、修改或删除记录会自动备份到 Cloudflare D1。
+      同步码相当于密码，请自己保存，不要发给别人。
+    </div>
+
+    <div id="cloudCurrentBox" class="calc-box">
+      <div class="sub">当前云用户</div>
+      <div style="font-size:20px;font-weight:800" id="cloudCurrentName">未启用</div>
+      <div class="tiny" id="cloudCurrentStatus">数据目前只保存在本机</div>
+      <div id="cloudCodeRow" class="hide" style="margin-top:10px">
+        <div class="sub">同步码</div>
+        <div style="font-family:ui-monospace,monospace;font-weight:800;font-size:16px;word-break:break-all" id="cloudCurrentCode">—</div>
+        <button class="secondary small" id="copyCloudCodeBtn" style="margin-top:8px">复制同步码</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>创建新云用户：姓名 / 昵称</label>
+      <input id="cloudNewName" placeholder="例如：张三">
+    </div>
+    <button id="createCloudUserBtn">创建用户并生成同步码</button>
+
+    <div class="field" style="margin-top:18px">
+      <label>已有用户：输入同步码恢复</label>
+      <input id="cloudRestoreCode" autocapitalize="characters" autocomplete="off" placeholder="例如：NT-7K4P-9X2M-6Q8R-3H5T">
+    </div>
+    <button class="secondary" id="restoreCloudUserBtn">从云端恢复 / 添加用户</button>
+
+    <div id="cloudSwitchWrap" class="field hide" style="margin-top:18px">
+      <label>切换本机用户</label>
+      <select id="cloudUserSelect"></select>
+      <button class="secondary" id="switchCloudUserBtn" style="margin-top:8px">切换用户</button>
+    </div>
+
+    <div class="actions" style="margin-top:12px">
+      <button class="secondary" id="cloudSaveNowBtn">立即备份到云端</button>
+      <button class="secondary" id="cloudLoadNowBtn">从云端覆盖恢复</button>
+    </div>
+
+    <div class="status" id="cloudSyncStatus"></div>
+
     <h3 class="section-title">数据备份</h3>
     <div class="note">
       饮食历史、本地商品库和目标设置主要保存在当前浏览器 / 主屏幕 App 的本地存储中。
@@ -413,7 +459,10 @@ const dateKey=()=>{
 const defaultGoals={kcal:2000,protein:120,carbs:220,fat:65,fiber:30};
 const goals=()=>({...defaultGoals,...JSON.parse(localStorage.getItem("nutriGoals")||"{}")});
 const entries=()=>JSON.parse(localStorage.getItem("nutriEntries")||"{}");
-const saveEntries=v=>localStorage.setItem("nutriEntries",JSON.stringify(v));
+const saveEntries=v=>{
+  localStorage.setItem("nutriEntries",JSON.stringify(v));
+  queueCloudBackup();
+};
 const todayEntries=()=>entries()[dateKey()]||[];
 
 let editing=null; // {date,index}
@@ -422,7 +471,10 @@ let currentProductSource="";
 let barcodeScanner=null;
 
 const productDb=()=>JSON.parse(localStorage.getItem("nutriProducts")||"{}");
-const saveProductDb=v=>localStorage.setItem("nutriProducts",JSON.stringify(v));
+const saveProductDb=v=>{
+  localStorage.setItem("nutriProducts",JSON.stringify(v));
+  queueCloudBackup();
+};
 
 function totalsFor(list){
   return list.reduce((a,x)=>({
@@ -2550,6 +2602,7 @@ function saveProfile(){
     goal:$("#calcGoal").value
   };
   localStorage.setItem("nutriProfile",JSON.stringify(profile));
+  queueCloudBackup();
 }
 
 function loadProfile(){
@@ -2621,6 +2674,7 @@ $("#saveGoalsBtn").onclick=()=>{
     fat:n($("#goalFat").value),
     fiber:n($("#goalFiber").value)
   }));
+  queueCloudBackup();
   saveProfile();
   $("#settingsDialog").close();
   render();
@@ -2724,6 +2778,466 @@ $("#updateBtn").onclick=()=>{
 };
 
 
+
+const CLOUD_DATA_URL="https://nutritrack-ocr.18810921920.workers.dev";
+
+let cloudSyncTimer=null;
+let cloudSyncSuppressed=false;
+
+function getCloudProfiles(){
+  try{
+    const v=JSON.parse(localStorage.getItem("nutriCloudProfiles")||"[]");
+    return Array.isArray(v)?v:[];
+  }catch(_){
+    return [];
+  }
+}
+
+function setCloudProfiles(v){
+  localStorage.setItem("nutriCloudProfiles",JSON.stringify(v));
+}
+
+function getActiveCloudCode(){
+  return localStorage.getItem("nutriActiveCloudCode")||"";
+}
+
+function setActiveCloudCode(code){
+  if(code){
+    localStorage.setItem("nutriActiveCloudCode",code);
+  }else{
+    localStorage.removeItem("nutriActiveCloudCode");
+  }
+}
+
+function normalizeSyncCode(code){
+  return String(code||"")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g,"");
+}
+
+function displaySyncCode(code){
+  const c=normalizeSyncCode(code);
+  if(!c)return "";
+  if(c.startsWith("NT")){
+    const body=c.slice(2);
+    return "NT-"+(body.match(/.{1,4}/g)||[]).join("-");
+  }
+  return (c.match(/.{1,4}/g)||[]).join("-");
+}
+
+function generateSyncCode(){
+  const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes=new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+
+  let body="";
+  for(const b of bytes){
+    body+=alphabet[b%alphabet.length];
+  }
+
+  return "NT-"+body.match(/.{1,4}/g).join("-");
+}
+
+function currentNutriSnapshot(){
+  const safe=(key,fallback)=>{
+    try{
+      return JSON.parse(localStorage.getItem(key)||fallback);
+    }catch(_){
+      return JSON.parse(fallback);
+    }
+  };
+
+  return {
+    nutriEntries:safe("nutriEntries","{}"),
+    nutriGoals:safe("nutriGoals","{}"),
+    nutriProfile:safe("nutriProfile","{}"),
+    nutriProducts:safe("nutriProducts","{}"),
+    nutriConfig:safe("nutriConfig","{}")
+  };
+}
+
+function applyNutriSnapshot(data){
+  if(!data || typeof data!=="object")return;
+
+  cloudSyncSuppressed=true;
+
+  try{
+    const keys=[
+      "nutriEntries",
+      "nutriGoals",
+      "nutriProfile",
+      "nutriProducts",
+      "nutriConfig"
+    ];
+
+    for(const key of keys){
+      if(data[key]!==undefined){
+        localStorage.setItem(key,JSON.stringify(data[key]));
+      }else{
+        localStorage.removeItem(key);
+      }
+    }
+  }finally{
+    setTimeout(()=>{cloudSyncSuppressed=false;},0);
+  }
+}
+
+function activeCloudProfile(){
+  const code=getActiveCloudCode();
+  if(!code)return null;
+
+  return getCloudProfiles().find(
+    p=>normalizeSyncCode(p.syncCode)===normalizeSyncCode(code)
+  )||null;
+}
+
+function upsertLocalCloudProfile(profile){
+  const profiles=getCloudProfiles();
+  const norm=normalizeSyncCode(profile.syncCode);
+  const i=profiles.findIndex(
+    p=>normalizeSyncCode(p.syncCode)===norm
+  );
+
+  if(i>=0){
+    profiles[i]={...profiles[i],...profile};
+  }else{
+    profiles.push(profile);
+  }
+
+  setCloudProfiles(profiles);
+  return profiles;
+}
+
+function stashActiveLocalSnapshot(){
+  const active=activeCloudProfile();
+  if(!active)return;
+
+  upsertLocalCloudProfile({
+    ...active,
+    snapshot:currentNutriSnapshot(),
+    localUpdatedAt:Date.now()
+  });
+}
+
+function updateCloudUi(message=""){
+  const active=activeCloudProfile();
+  const profiles=getCloudProfiles();
+
+  if(active){
+    $("#cloudCurrentName").textContent=active.displayName||"云用户";
+    $("#cloudCurrentCode").textContent=displaySyncCode(active.syncCode);
+    $("#cloudCodeRow").classList.remove("hide");
+    $("#cloudUserBadge").textContent=`云：${active.displayName||"用户"}`;
+
+    const t=active.lastSyncedAt
+      ? new Date(active.lastSyncedAt).toLocaleString("zh-CN")
+      : "尚未同步";
+
+    $("#cloudCurrentStatus").textContent=
+      message || `最近同步：${t}`;
+  }else{
+    $("#cloudCurrentName").textContent="未启用";
+    $("#cloudCurrentStatus").textContent=
+      message || "数据目前只保存在本机";
+    $("#cloudCodeRow").classList.add("hide");
+    $("#cloudUserBadge").textContent="仅本地";
+  }
+
+  if(profiles.length){
+    $("#cloudSwitchWrap").classList.remove("hide");
+    $("#cloudUserSelect").innerHTML=profiles.map(p=>{
+      const selected=active &&
+        normalizeSyncCode(active.syncCode)===normalizeSyncCode(p.syncCode)
+        ? " selected":"";
+
+      return `<option value="${displaySyncCode(p.syncCode)}"${selected}>${
+        p.displayName||"未命名用户"
+      }</option>`;
+    }).join("");
+  }else{
+    $("#cloudSwitchWrap").classList.add("hide");
+  }
+
+  if(message){
+    $("#cloudSyncStatus").textContent=message;
+  }
+}
+
+async function cloudRequest(path,body){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),20000);
+
+  try{
+    const res=await fetch(`${CLOUD_DATA_URL}${path}`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(body),
+      signal:controller.signal
+    });
+
+    const data=await res.json().catch(()=>({}));
+
+    if(!res.ok || !data.ok){
+      const msg=
+        data?.error?.message ||
+        data?.error ||
+        `HTTP ${res.status}`;
+
+      throw new Error(String(msg));
+    }
+
+    return data;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+async function cloudSaveNow(showAlert=false){
+  const active=activeCloudProfile();
+
+  if(!active){
+    if(showAlert)alert("请先创建或恢复一个云用户。");
+    return false;
+  }
+
+  const snapshot=currentNutriSnapshot();
+
+  if(showAlert){
+    $("#cloudSyncStatus").textContent="正在备份到 D1…";
+  }
+
+  try{
+    const result=await cloudRequest("/data/save",{
+      syncCode:active.syncCode,
+      displayName:active.displayName||"用户",
+      data:{
+        ...snapshot,
+        cloudProfile:{
+          displayName:active.displayName||"用户"
+        }
+      }
+    });
+
+    upsertLocalCloudProfile({
+      ...active,
+      snapshot,
+      lastSyncedAt:result.updatedAt||Date.now()
+    });
+
+    updateCloudUi("已备份到云端");
+
+    if(showAlert){
+      alert("云端备份完成。");
+    }
+
+    return true;
+
+  }catch(err){
+    console.error(err);
+    updateCloudUi(`云同步失败：${err?.message||err}`);
+
+    if(showAlert){
+      alert(`云端备份失败：${err?.message||err}`);
+    }
+
+    return false;
+  }
+}
+
+function queueCloudBackup(){
+  if(cloudSyncSuppressed)return;
+  if(!activeCloudProfile())return;
+
+  clearTimeout(cloudSyncTimer);
+
+  cloudSyncTimer=setTimeout(()=>{
+    cloudSaveNow(false);
+  },1200);
+}
+
+async function cloudLoadByCode(syncCode,activate=true){
+  const code=displaySyncCode(syncCode);
+
+  if(!normalizeSyncCode(code)){
+    throw new Error("同步码不能为空");
+  }
+
+  const result=await cloudRequest("/data/load",{
+    syncCode:code
+  });
+
+  const remote=result.data||{};
+  const displayName=
+    remote?.cloudProfile?.displayName ||
+    result.displayName ||
+    "云用户";
+
+  const snapshot={
+    nutriEntries:remote.nutriEntries||{},
+    nutriGoals:remote.nutriGoals||{},
+    nutriProfile:remote.nutriProfile||{},
+    nutriProducts:remote.nutriProducts||{},
+    nutriConfig:remote.nutriConfig||{}
+  };
+
+  stashActiveLocalSnapshot();
+
+  upsertLocalCloudProfile({
+    displayName,
+    syncCode:code,
+    snapshot,
+    lastSyncedAt:result.updatedAt||Date.now()
+  });
+
+  if(activate){
+    setActiveCloudCode(code);
+    applyNutriSnapshot(snapshot);
+    render();
+    updateCloudUi("已从云端恢复");
+  }
+
+  return {displayName,snapshot,result};
+}
+
+$("#createCloudUserBtn").onclick=async()=>{
+  const name=$("#cloudNewName").value.trim();
+
+  if(!name){
+    alert("请输入姓名或昵称。");
+    return;
+  }
+
+  const existingActive=activeCloudProfile();
+
+  // First cloud user adopts the current local data.
+  // Additional users start with a fresh local dataset.
+  if(existingActive){
+    stashActiveLocalSnapshot();
+  }
+
+  const code=generateSyncCode();
+
+  if(existingActive){
+    applyNutriSnapshot({
+      nutriEntries:{},
+      nutriGoals:{},
+      nutriProfile:{},
+      nutriProducts:{},
+      nutriConfig:{}
+    });
+  }
+
+  const snapshot=currentNutriSnapshot();
+
+  upsertLocalCloudProfile({
+    displayName:name,
+    syncCode:code,
+    snapshot,
+    lastSyncedAt:0
+  });
+
+  setActiveCloudCode(code);
+  updateCloudUi("新用户已创建，正在首次备份…");
+
+  const ok=await cloudSaveNow(false);
+
+  $("#cloudNewName").value="";
+
+  if(ok){
+    alert(
+      `用户“${name}”创建成功。\n\n同步码：\n${code}\n\n`+
+      "请截图或保存到密码管理器。同步码丢失后将无法在新设备恢复该用户。"
+    );
+  }
+};
+
+$("#restoreCloudUserBtn").onclick=async()=>{
+  const code=$("#cloudRestoreCode").value.trim();
+
+  if(!code){
+    alert("请输入同步码。");
+    return;
+  }
+
+  $("#cloudSyncStatus").textContent="正在从 D1 读取…";
+
+  try{
+    const r=await cloudLoadByCode(code,true);
+    $("#cloudRestoreCode").value="";
+    alert(`已恢复用户：${r.displayName}`);
+  }catch(err){
+    console.error(err);
+    $("#cloudSyncStatus").textContent=`恢复失败：${err?.message||err}`;
+    alert(`恢复失败：${err?.message||err}`);
+  }
+};
+
+$("#switchCloudUserBtn").onclick=async()=>{
+  const code=$("#cloudUserSelect").value;
+  if(!code)return;
+
+  const target=getCloudProfiles().find(
+    p=>normalizeSyncCode(p.syncCode)===normalizeSyncCode(code)
+  );
+
+  if(!target)return;
+
+  stashActiveLocalSnapshot();
+  setActiveCloudCode(target.syncCode);
+
+  if(target.snapshot){
+    applyNutriSnapshot(target.snapshot);
+    render();
+    updateCloudUi(`已切换到 ${target.displayName||"用户"}`);
+  }else{
+    try{
+      await cloudLoadByCode(target.syncCode,true);
+    }catch(err){
+      alert(`切换失败：${err?.message||err}`);
+    }
+  }
+};
+
+$("#cloudSaveNowBtn").onclick=()=>cloudSaveNow(true);
+
+$("#cloudLoadNowBtn").onclick=async()=>{
+  const active=activeCloudProfile();
+
+  if(!active){
+    alert("请先创建或恢复一个云用户。");
+    return;
+  }
+
+  const ok=confirm(
+    "将用云端数据覆盖当前用户的本机数据。\n\n确定继续吗？"
+  );
+
+  if(!ok)return;
+
+  try{
+    await cloudLoadByCode(active.syncCode,true);
+    alert("已从云端恢复。");
+  }catch(err){
+    alert(`恢复失败：${err?.message||err}`);
+  }
+};
+
+$("#copyCloudCodeBtn").onclick=async()=>{
+  const active=activeCloudProfile();
+  if(!active)return;
+
+  const code=displaySyncCode(active.syncCode);
+
+  try{
+    await navigator.clipboard.writeText(code);
+    $("#cloudSyncStatus").textContent="同步码已复制";
+  }catch(_){
+    prompt("请复制同步码：",code);
+  }
+};
+
+updateCloudUi();
+
 function buildBackupObject(){
   return {
     app:"NutriTrack",
@@ -2798,6 +3312,7 @@ $("#importDataInput").onchange=async e=>{
     }
 
     alert("数据恢复完成。");
+    queueCloudBackup();
     location.reload();
 
   }catch(err){
@@ -2807,6 +3322,6 @@ $("#importDataInput").onchange=async e=>{
 };
 
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V20 · 相册与更新修复</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V21 · D1 云同步</div>
 </body>
 </html>
