@@ -1623,7 +1623,7 @@ function rebuildRowsFromTencent(detections){
   })();
 
   // Allow cells from the same printed row to be grouped even if baselines vary.
-  const tolerance=Math.max(10,medianHeight*.72);
+  const tolerance=Math.max(6,medianHeight*.38);
   const rows=[];
 
   for(const item of items){
@@ -1646,6 +1646,250 @@ function rebuildRowsFromTencent(detections){
   }).join("\n");
 }
 
+
+function normalizeCloudOcrText(text){
+  return String(text||"")
+    .replace(/\r/g,"\n")
+    .replace(/[，]/g,",")
+    .replace(/[：﹕]/g,":")
+    .replace(/[ＯO](?=\d)/g,"0")
+    .replace(/(?<=\d)[ＯO]/g,"0");
+}
+
+function getCloudBasis(text){
+  const s=normalizeCloudOcrText(text);
+
+  const m=s.match(/每\s*(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)/i);
+  if(m){
+    return {
+      amount:Number(m[1]),
+      unit:/ml|毫升/i.test(m[2]) ? "ml" : "g"
+    };
+  }
+
+  const e=s.match(/per\s*(\d+(?:\.\d+)?)\s*(g|ml)/i);
+  if(e){
+    return {
+      amount:Number(e[1]),
+      unit:/ml/i.test(e[2]) ? "ml" : "g"
+    };
+  }
+
+  return {amount:100,unit:"g"};
+}
+
+function firstNumberAfterFlexibleKeyword(text,keywordPattern,unitPattern,maxChars=80){
+  const s=normalizeCloudOcrText(text);
+  const re=new RegExp(
+    `(?:${keywordPattern})[\\s\\S]{0,${maxChars}}?(\\d+(?:\\.\\d+)?)\\s*${unitPattern}`,
+    "i"
+  );
+  const m=s.match(re);
+  return m ? Number(m[1]) : 0;
+}
+
+function extractAllCloudNumbers(text){
+  const s=normalizeCloudOcrText(text);
+
+  const kj=[...s.matchAll(/(\d{2,5}(?:\.\d+)?)\s*k\s*j/ig)]
+    .map((m,i)=>({value:Number(m[1]),index:m.index}));
+
+  const mg=[...s.matchAll(/(\d{1,5}(?:\.\d+)?)\s*m\s*g/ig)]
+    .map((m,i)=>({value:Number(m[1]),index:m.index}));
+
+  const grams=[...s.matchAll(/(\d{1,3}(?:\.\d+)?)\s*g/ig)]
+    .map((m,i)=>({value:Number(m[1]),index:m.index}))
+    .filter(x=>x.value>0 && x.value<=100);
+
+  const percents=[...s.matchAll(/(\d{1,3}(?:\.\d+)?)\s*%/g)]
+    .map((m,i)=>({value:Number(m[1]),index:m.index}))
+    .filter(x=>x.value>0 && x.value<=100);
+
+  return {kj,mg,grams,percents};
+}
+
+function cloudNrvExpected(nutrient,percent){
+  const nrv={
+    protein:60,
+    fat:60,
+    carbs:300,
+    fiber:25,
+    sodium:2000,
+    kj:8400
+  };
+  return nrv[nutrient] ? nrv[nutrient]*percent/100 : 0;
+}
+
+function bestNrvMatch(candidates,percents,nutrient,unit="g"){
+  let best=null;
+
+  for(let ci=0;ci<candidates.length;ci++){
+    const c=candidates[ci];
+
+    for(let pi=0;pi<percents.length;pi++){
+      const p=percents[pi];
+      const expected=cloudNrvExpected(nutrient,p.value);
+      if(!expected)continue;
+
+      const rel=Math.abs(c.value-expected)/Math.max(expected,0.01);
+
+      // Reward nearby value/percentage pairs in OCR reading order,
+      // but NRV agreement is the primary signal.
+      const distance=Math.min(Math.abs((c.index||0)-(p.index||0))/250,1);
+      const score=rel + distance*0.08;
+
+      if(!best || score<best.score){
+        best={
+          value:c.value,
+          candidateIndex:ci,
+          percentIndex:pi,
+          percent:p.value,
+          score,
+          relativeError:rel
+        };
+      }
+    }
+  }
+
+  // Chinese nutrition-label rounding makes ~45% tolerance reasonable.
+  return best && best.relativeError<=0.45 ? best : null;
+}
+
+function parseTencentNutrition(rawText,positionalText=""){
+  const raw=normalizeCloudOcrText(rawText);
+  const pos=normalizeCloudOcrText(positionalText);
+  const combined=`${raw}\n${pos}`;
+
+  const basis=getCloudBasis(combined);
+  const all=extractAllCloudNumbers(raw);
+
+  const values={
+    kj:0,
+    protein:0,
+    fat:0,
+    carbs:0,
+    fiber:0,
+    sugar:0,
+    sodium:0
+  };
+
+  // Energy and sodium have distinctive units, so they are safe to read directly.
+  if(all.kj.length){
+    const energyNrv=bestNrvMatch(all.kj,all.percents,"kj","kj");
+    values.kj=energyNrv ? energyNrv.value : all.kj[0].value;
+  }
+
+  if(all.mg.length){
+    const sodiumNrv=bestNrvMatch(all.mg,all.percents,"sodium","mg");
+    values.sodium=sodiumNrv ? sodiumNrv.value : all.mg[0].value;
+  }
+
+  // Strong explicit labels first.
+  values.carbs =
+    firstNumberAfterFlexibleKeyword(raw,"碳\\s*水\\s*化\\s*合\\s*物|碳水|carbohydrates?","g",45);
+
+  values.fiber =
+    firstNumberAfterFlexibleKeyword(raw,"膳\\s*食\\s*纤\\s*维|dietary\\s*fib(?:er|re)|fib(?:er|re)","g",45);
+
+  values.protein =
+    firstNumberAfterFlexibleKeyword(raw,"蛋\\s*白\\s*质|protein","g",45);
+
+  values.fat =
+    firstNumberAfterFlexibleKeyword(raw,"脂\\s*肪|fat","g",45);
+
+  // IMPORTANT: do not infer sugar from generic "糖" because packaging text
+  // contains phrases like 无添加蔗糖 and 以100g产品计.
+  // Only accept a clearly labelled nutrition-row sugar value.
+  values.sugar =
+    firstNumberAfterFlexibleKeyword(
+      raw,
+      "(?:糖\\s*$|总\\s*糖|糖\\s*类|sugars?)",
+      "g",
+      30
+    );
+
+  // Remove serving-size values (e.g. 每30g) and trans-fat 0g from gram candidates.
+  const gramCandidates=all.grams.filter(x=>{
+    if(Math.abs(x.value-basis.amount)<0.001){
+      const near=raw.slice(Math.max(0,x.index-8),x.index+8);
+      if(/每|per/i.test(near))return false;
+    }
+    return x.value>0;
+  });
+
+  // Use NRV cross-checking when a label was split or reordered by OCR.
+  const usedValues=new Set(
+    ["protein","fat","carbs","fiber"]
+      .map(k=>values[k])
+      .filter(v=>v>0)
+      .map(v=>String(v))
+  );
+
+  const remaining=gramCandidates.filter(c=>!usedValues.has(String(c.value)));
+
+  for(const nutrient of ["protein","carbs","fat","fiber"]){
+    if(values[nutrient]>0)continue;
+
+    const match=bestNrvMatch(remaining,all.percents,nutrient);
+    if(match){
+      values[nutrient]=match.value;
+      const removeAt=remaining.findIndex(x=>x.value===match.value);
+      if(removeAt>=0)remaining.splice(removeAt,1);
+    }
+  }
+
+  // Final sanity checks in the label's original basis.
+  const limits={
+    kj:10000,
+    protein:100,
+    fat:100,
+    carbs:100,
+    fiber:50,
+    sugar:100,
+    sodium:5000
+  };
+
+  for(const [k,max] of Object.entries(limits)){
+    if(!Number.isFinite(values[k]) || values[k]<0 || values[k]>max){
+      values[k]=0;
+    }
+  }
+
+  return {values,basis};
+}
+
+function applyTencentNutrition(parsed){
+  const raw={...parsed.values};
+  const basis=parsed.basis||{amount:100,unit:"g"};
+
+  let vals={...raw};
+
+  if(basis.amount && basis.amount>0 && basis.amount!==100){
+    const scale=100/basis.amount;
+
+    for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
+      if(vals[k])vals[k]=round(vals[k]*scale);
+    }
+
+    $("#basis").value="100";
+    $("#amount").value=String(basis.amount);
+    $("#amountLabel").textContent=
+      `本次吃了多少 ${basis.unit}（标签原始基准：每 ${basis.amount}${basis.unit}）`;
+  }else{
+    $("#basis").value="100";
+    $("#amount").value="100";
+    $("#amountLabel").textContent="本次吃了多少 g / ml";
+  }
+
+  for(const k of ["kj","protein","fat","carbs","fiber","sugar","sodium"]){
+    $("#"+k).value=vals[k] ? vals[k] : "";
+  }
+
+  updateEnergyPreview();
+
+  return vals;
+}
+
 function fillFromTencentResult(data){
   const positionalText=rebuildRowsFromTencent(data.detections||[]);
   const rawText=String(data.text||"").trim();
@@ -1656,28 +1900,29 @@ function fillFromTencentResult(data){
 
   $("#ocrText").value=combined;
 
-  // Position-rebuilt rows are much more useful for nutrition-table parsing.
-  const parsed=parseNutrition(positionalText||rawText);
+  // v14: cloud OCR uses a dedicated parser. Do not send Tencent output
+  // through the old Tesseract-oriented parseNutrition function.
+  const cloudParsed=parseTencentNutrition(rawText,positionalText);
+  const vals=applyTencentNutrition(cloudParsed);
 
   const found=[
-    parsed.kj,
-    parsed.protein,
-    parsed.carbs,
-    parsed.fat,
-    parsed.fiber,
-    parsed.sodium
+    vals.kj,
+    vals.protein,
+    vals.carbs,
+    vals.fat,
+    vals.fiber,
+    vals.sodium
   ].filter(v=>Number(v)>0).length;
 
   currentProductSource="腾讯云高精度 OCR";
 
   $("#ocrStatus").textContent=
     found>=5
-      ? `腾讯云识别完成，已解析 ${found} 项主要营养数据。请核对后保存。`
-      : `腾讯云识别完成，目前解析到 ${found} 项。请查看原始文本并补充缺失值。`;
+      ? `腾讯云识别完成，已通过营养项目 + NRV 交叉校验解析 ${found} 项主要数据。请核对后保存。`
+      : `腾讯云识别完成，目前可靠解析到 ${found} 项。缺失项不会乱填，请手动补充。`;
 
-  return parsed;
+  return vals;
 }
-
 async function cloudRecognizeCanvas(canvas,label="腾讯云高精度识别"){
   $("#ocrStatus").textContent=`${label}：正在压缩并上传图片…`;
 
@@ -1951,7 +2196,22 @@ function parseNutrition(text){
   return vals;
 }
 
-$("#parseBtn").onclick=()=>parseNutrition($("#ocrText").value);
+$("#parseBtn").onclick=()=>{
+  const text=$("#ocrText").value;
+
+  if(text.includes("【腾讯云原始文字】")){
+    const raw=text.split("【腾讯云原始文字】")[1]||text;
+    const pos=text.includes("【按位置重建表格】")
+      ? (text.split("【按位置重建表格】")[1]||"").split("【腾讯云原始文字】")[0]
+      : "";
+
+    const parsed=parseTencentNutrition(raw,pos);
+    applyTencentNutrition(parsed);
+    $("#ocrStatus").textContent="已按腾讯云 OCR + NRV 规则重新解析，请核对数值。";
+  }else{
+    parseNutrition(text);
+  }
+};
 
 $("#saveFoodBtn").onclick=()=>{
   const basis=$("#basis").value;
@@ -2194,6 +2454,6 @@ if("serviceWorker" in navigator){
 
 render();
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v13 · Tencent Cloud OCR</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack v14 · Tencent OCR + NRV Smart Parser</div>
 </body>
 </html>
