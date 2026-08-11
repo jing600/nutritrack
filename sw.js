@@ -1,4 +1,4 @@
-const CACHE_NAME = "nutritrack-v18";
+const CACHE_NAME = "nutritrack-v19";
 
 const APP_FILES = [
   "./",
@@ -51,4 +51,11 @@ self.addEventListener("fetch", event => {
       })
       .catch(() => caches.match(request))
   );
+});
+
+
+self.addEventListener("message",event=>{
+  if(event.data && event.data.type==="SKIP_WAITING"){
+    self.skipWaiting();
+  }
 });

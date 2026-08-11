@@ -109,7 +109,7 @@
     <div>
       <div class="date" id="todayLabel"></div>
       <h1 style="margin-bottom:4px">NutriTrack</h1>
-      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V18</div>
+      <div style="display:inline-block;margin-bottom:3px;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#111827;color:#fff">V19</div>
       <div class="sub">个人每日营养记录</div>
     </div>
     <div class="top-actions" style="flex-wrap:wrap;justify-content:flex-end">
@@ -160,6 +160,9 @@
       <button id="scanLabelBtn">从相册识别营养成分表</button>
       <button class="secondary" id="manualBtn">手动添加</button>
     </div>
+    <div class="sub" style="margin-top:8px">
+      选择照片后会自动调用腾讯云高精度 OCR；如果整图效果不好，再使用“裁剪营养表”。
+    </div>
 
     <input id="imageInput" type="file" accept="image/*" class="hide" />
 
@@ -170,7 +173,7 @@
       </div>
 
       <div class="note">
-        <b>v18 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
+        <b>v19 云端高精度 OCR：</b>选图后会优先调用腾讯云高精度识别。中国包装建议先裁剪营养表；识别结果会按文字位置自动重建表格行，再解析能量、蛋白质、脂肪、碳水、纤维和钠。
       </div>
 
       <div class="actions">
@@ -611,7 +614,7 @@ $$(".close").forEach(b=>b.onclick=()=>{
 });
 
 $("#manualBtn").onclick=()=>$("#foodForm").classList.remove("hide");
-$("#scanLabelBtn").onclick=()=>$("#imageInput").click();
+$("#scanLabelBtn").onclick=()=>{  $("#imageInput").value="";  $("#imageInput").click();};
 
 function normalizeBarcode(value){
   return String(value||"").replace(/\D/g,"");
@@ -2131,31 +2134,38 @@ async function cloudRecognizeCanvas(canvas,label="腾讯云高精度识别"){
 }
 
 $("#imageInput").onchange=async e=>{
-  const file=e.target.files[0];
+  const file=e.target.files?.[0];
   if(!file)return;
 
+  // Immediately reveal OCR UI after photo selection.
   $("#ocrArea").classList.remove("hide");
   $("#foodForm").classList.remove("hide");
 
-  const url=URL.createObjectURL(file);
-  $("#preview").src=url;
-  $("#ocrStatus").textContent="图片已载入，正在准备腾讯云高精度识别…";
+  const previewUrl=URL.createObjectURL(file);
+  $("#preview").src=previewUrl;
+
+  $("#ocrStatus").textContent="图片已选择，正在准备腾讯云高精度识别…";
 
   try{
     ocrImageBitmap=await loadImageBitmapFromFile(file);
     cropSelection=null;
 
+    // Scroll OCR status into view so iPhone users can see recognition progress.
+    $("#ocrArea").scrollIntoView({
+      behavior:"smooth",
+      block:"start"
+    });
+
     const canvas=prepareCloudCanvas(ocrImageBitmap);
     await cloudRecognizeCanvas(canvas,"腾讯云整图识别");
+
   }catch(err){
     console.error(err);
 
-    if(!ocrImageBitmap){
-      $("#ocrStatus").textContent="图片读取失败，请重新选择照片。";
-    }
+    $("#ocrStatus").textContent=
+      `自动识别失败：${err?.message||err}。可以点击“腾讯云高精度识别”重试，或裁剪营养表后识别。`;
   }
 };
-
 $("#cloudOcrBtn").onclick=async()=>{
   if(!ocrImageBitmap)return alert("请先选择营养成分表图片。");
 
@@ -2613,57 +2623,97 @@ if("serviceWorker" in navigator){
 
 render();
 
-async function forceAppUpdate(){
-  const btn=$("#updateBtn");
-  const original=btn.textContent;
+let updateReloadArmed=false;
 
-  btn.disabled=true;
-  btn.textContent="更新中…";
+async function requestAppUpdate(showNoUpdate=true){
+  const btn=$("#updateBtn");
+  const oldText=btn?.textContent||"更新";
+
+  if(btn){
+    btn.disabled=true;
+    btn.textContent="检查中…";
+  }
 
   try{
-    // Ask every registered worker for an immediate update.
-    if("serviceWorker" in navigator){
-      const regs=await navigator.serviceWorker.getRegistrations();
+    if(!("serviceWorker" in navigator)){
+      throw new Error("当前浏览器不支持 Service Worker");
+    }
 
-      for(const reg of regs){
-        try{
-          await reg.update();
-        }catch(err){
-          console.warn("Service worker update failed:",err);
+    const reg=await navigator.serviceWorker.getRegistration();
+
+    if(!reg){
+      throw new Error("尚未注册 Service Worker");
+    }
+
+    const before=
+      reg.active?.scriptURL || "";
+
+    await reg.update();
+
+    // A newly found worker may already be installing/waiting.
+    const candidate=
+      reg.waiting ||
+      reg.installing;
+
+    if(candidate){
+      if(btn)btn.textContent="正在更新…";
+
+      updateReloadArmed=true;
+
+      // sw.js listens for SKIP_WAITING.
+      candidate.postMessage({type:"SKIP_WAITING"});
+
+      // controllerchange below will reload after takeover.
+      setTimeout(()=>{
+        if(updateReloadArmed){
+          location.reload();
         }
-      }
+      },4000);
+
+      return;
     }
 
-    // Delete only Cache Storage. Do NOT touch localStorage, because it stores
-    // NutriTrack history, goals and the local product database.
-    if("caches" in window){
-      const names=await caches.keys();
-      await Promise.all(names.map(name=>caches.delete(name)));
+    if(btn){
+      btn.disabled=false;
+      btn.textContent=oldText;
     }
 
-    // Add a cache-busting query so iOS standalone mode requests fresh HTML.
-    const url=new URL(location.href);
-    url.searchParams.set("appv","18");
-    url.searchParams.set("_refresh",String(Date.now()));
-
-    location.replace(url.toString());
+    if(showNoUpdate){
+      alert("已经是当前可获取的最新版本。");
+    }
 
   }catch(err){
     console.error(err);
-    btn.disabled=false;
-    btn.textContent=original;
-    alert("更新失败，请检查网络后再试。不会影响你的历史记录。");
+
+    if(btn){
+      btn.disabled=false;
+      btn.textContent=oldText;
+    }
+
+    alert(`检查更新失败：${err?.message||err}`);
   }
 }
 
-$("#updateBtn").onclick=()=>{
-  const ok=confirm(
-    "检查并拉取最新版 NutriTrack？\n\n" +
-    "只会清理网页缓存，不会删除饮食历史、目标设置或本地商品库。"
-  );
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{
+    if(updateReloadArmed)return;
 
-  if(ok)forceAppUpdate();
+    updateReloadArmed=true;
+    location.reload();
+  });
+
+  // Each launch asks the browser to check sw.js without touching app data.
+  window.addEventListener("load",()=>{
+    setTimeout(()=>{
+      requestAppUpdate(false).catch(()=>{});
+    },1200);
+  });
+}
+
+$("#updateBtn").onclick=()=>{
+  requestAppUpdate(true);
 };
+
 
 function buildBackupObject(){
   return {
@@ -2748,6 +2798,6 @@ $("#importDataInput").onchange=async e=>{
 };
 
 </script>
-<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V18 · 中文单位兼容</div>
+<div style="text-align:center;color:#999;font-size:12px;padding:10px 0 24px">NutriTrack V19 · 自动更新修复</div>
 </body>
 </html>
